@@ -32,9 +32,8 @@ a hub's WebSocket (valencesim on this PC); `wifi <ssid> <pass>` and
 ## Layout
 
 - `docs/DESIGN.md`: design rulings and open questions.
-- The Valence client library (MIT) lives in `../Valence/lib/valence`; until
-  `feat/client-lib` merges, the build reads `../Valence-clientlib` at the sha in
-  `valence.pin`.
+- The Valence client library (MIT) lives in `../Valence/lib/valence`; the
+  build reads that sibling checkout at the sha in `valence.pin`.
 - Volatile status lives on the dev board: `bd ready` (prefix `gar`).
 
 ## License

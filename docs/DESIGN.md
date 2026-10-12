@@ -71,7 +71,7 @@ crosses between tasks.
   bugs in Nucleus). State lives in file-scope objects or in heap objects
   owned by the UI task.
 
-### 2.3 Library work (Valence `feat/client-lib`)
+### 2.3 Library work (Valence main)
 
 | Gap | Library addition |
 |---|---|

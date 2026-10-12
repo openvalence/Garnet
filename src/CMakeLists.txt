@@ -1,8 +1,7 @@
 # The Valence client library is header-only (MIT): an include path is the
-# whole of consuming it. It lives on Valence's feat/client-lib branch until
-# that merges; then VALENCE_ROOT moves to ../Valence and valence.pin follows.
+# whole of consuming it. The sibling Valence checkout, at the sha in valence.pin.
 if(NOT DEFINED VALENCE_ROOT)
-    set(VALENCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../Valence-clientlib")
+    set(VALENCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../Valence")
 endif()
 if(NOT DEFINED GARNET_BOARD)
     set(GARNET_BOARD waveshare_s3_43)
