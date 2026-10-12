@@ -19,6 +19,7 @@ constexpr const char* kTag = "ws";
 constexpr size_t kTxDepth = 64;
 constexpr size_t kRxDepth = 192;  // a whole catalog burst (~140 chunks) fits
 constexpr uint32_t kReconnectMs = 2000;
+constexpr uint32_t kReconnectMaxMs = 30000;
 constexpr int kSendTimeoutMs = 3000;
 constexpr int kRecvPollMs = 500;  // the reader wakes this often to see a drop request
 
@@ -199,6 +200,7 @@ bool WsLink::connectAndUpgrade(int fd) {
 void WsLink::readerTask() {
     auto* buf = static_cast<uint8_t*>(heap_caps_malloc(valence::kFrameBufferCapacity, MALLOC_CAP_INTERNAL));
     configASSERT(buf);
+    uint32_t backoffMs = kReconnectMs;  // doubles while the hub refuses the socket
     for (;;) {
         if (_ip.load() == 0) {
             vTaskDelay(pdMS_TO_TICKS(100));
@@ -214,9 +216,11 @@ void WsLink::readerTask() {
         setTimeout(fd, SO_SNDTIMEO, kSendTimeoutMs);
         if (!connectAndUpgrade(fd)) {
             ::close(fd);
-            vTaskDelay(pdMS_TO_TICKS(kReconnectMs));
+            vTaskDelay(pdMS_TO_TICKS(backoffMs + esp_random() % (backoffMs / 4 + 1)));
+            backoffMs = backoffMs * 2 > kReconnectMaxMs ? kReconnectMaxMs : backoffMs * 2;
             continue;
         }
+        backoffMs = kReconnectMs;
         xQueueReset(_tx);
         _rx.clear();
         _fd = fd;

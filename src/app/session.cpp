@@ -21,7 +21,8 @@ namespace {
 constexpr const char* kTag = "session";
 constexpr const char* kNs = "garnet";
 constexpr uint32_t kProbeEveryMs = 1000;
-constexpr uint32_t kRetryMs = 2000;
+constexpr uint32_t kRetryBaseMs = 2000;  // first retry after a failed handshake or link
+constexpr uint32_t kRetryMaxMs = 60000;  // doubling stops here
 constexpr uint32_t kWelcomeTimeoutMs = 5000;
 constexpr uint32_t kHandshakeTimeoutMs = 15000;  // the readiness gate's own bound (§6.4)
 constexpr uint32_t kStaleMs = 3000;  // ~3 idle PING intervals with no answer
@@ -141,6 +142,8 @@ void Session::connectTo(uint32_t ipv4, uint16_t port) {
     nvsPutBlob("hub_ip", &_hubIp, sizeof(_hubIp));
     nvsPutBlob("hub_port", &_hubPort, sizeof(_hubPort));
     _client->disconnect();
+    _backoffMs = 0;
+    _retryAtMs = _nowMs;
     std::snprintf(_hubName, sizeof(_hubName), "typed address");
     if (_mode == LinkMode::Wifi && wifi::state() == wifi::State::Connected) {
         _activeIp = ipv4;
@@ -179,6 +182,10 @@ void Session::tickWifi(uint32_t nowMs) {
         return;
     }
     if (!_udp.isOpen()) _udp.open();
+    if (!due(nowMs, _retryAtMs)) {  // backing off: no socket, no probe
+        setStatus("Retrying %s in %u s", _hubName[0] ? _hubName : "hub", unsigned((_retryAtMs - nowMs + 999) / 1000));
+        return;
+    }
     if (!_ws.started() && _hubIp != 0) {  // a typed address outranks discovery
         _activeIp = _hubIp;
         _ws.start(_hubIp, _hubPort);
@@ -214,8 +221,7 @@ void Session::tickWifi(uint32_t nowMs) {
         _connectStartMs = nowMs;
         _client->connect();
     } else if (!_ws.connected() && st != valence::ClientSessionState::CLOSED) {
-        _client->disconnect();
-        _retryAtMs = nowMs + kRetryMs;
+        scheduleRetry(0, "link down");
     }
     if (!_ws.connected()) setStatus("Connecting to %s", _hubName[0] ? _hubName : "hub");
 }
@@ -236,6 +242,10 @@ void Session::tick(uint32_t nowUs) {
         }
     }
     _client->update(nowUs);
+    if (_busyRetry) {
+        _busyRetry = false;
+        scheduleRetry(_busyRetryMs, "hub busy");
+    }
     if (_stallOnSyncMs != 0 && _client->state() == valence::ClientSessionState::SYNCING) {
         ESP_LOGW(kTag, "bench: UI task stalls %u ms inside the catalog transfer", unsigned(_stallOnSyncMs));
         vTaskDelay(pdMS_TO_TICKS(_stallOnSyncMs));
@@ -246,14 +256,11 @@ void Session::tick(uint32_t nowUs) {
     const uint32_t handshakeMs = timeDiff(_nowMs, _connectStartMs);
     if ((st == valence::ClientSessionState::HELLO_SENT && handshakeMs > kWelcomeTimeoutMs) ||
         (st == valence::ClientSessionState::SYNCING && handshakeMs > kHandshakeTimeoutMs)) {
-        ESP_LOGW(kTag, "handshake timed out, retrying");
-        _client->disconnect();
-        _retryAtMs = _nowMs + kRetryMs;
+        scheduleRetry(0, "handshake timed out");
     }
     if (st == valence::ClientSessionState::LIVE && linkStale()) {
-        ESP_LOGW(kTag, "no frames for %u ms, reconnecting", unsigned(_client->rxAgeMs()));
-        _client->disconnect();
-        _retryAtMs = _nowMs + kRetryMs;
+        ESP_LOGW(kTag, "no frames for %u ms", unsigned(_client->rxAgeMs()));
+        scheduleRetry(0, "link stale");
     }
     if (_needSubscribe && st == valence::ClientSessionState::LIVE) {
         _needSubscribe = false;
@@ -408,14 +415,34 @@ bool Session::runAction(std::string_view a) {
 
 void Session::onStateChange(valence::ClientSessionState s) {
     ESP_LOGI(kTag, "session state %d, roles %d", int(s), int(_client->roles()));
-    if (s == valence::ClientSessionState::LIVE) _needSubscribe = _model->loaded();
+    if (s == valence::ClientSessionState::LIVE) {
+        _needSubscribe = _model->loaded();
+        _backoffMs = 0;
+    }
     if (s == valence::ClientSessionState::CLOSED) _model->clearValues();
 }
 
 void Session::onState(uint16_t ch, uint16_t, std::span<const std::byte> payload) { _model->onState(ch, payload); }
 
 void Session::onNack(const valence::NackMsg& n) {
-    ESP_LOGW(kTag, "NACK code 0x%04x on channel 0x%04x", unsigned(n.code), unsigned(n.channel_id));
+    ESP_LOGW(kTag, "NACK code 0x%04x on channel 0x%04x, retry_after %u ms", unsigned(n.code), unsigned(n.channel_id),
+             n.has_retry_after_ms ? unsigned(n.retry_after_ms) : 0u);
+    // BUSY before LIVE refuses the catalog fetch: leave and come back later,
+    // never re-ask at once (acted on in tick(), outside the Client's dispatch).
+    if (n.code == valence::NackCode::BUSY && !live()) {
+        _busyRetry = true;
+        _busyRetryMs = n.has_retry_after_ms ? n.retry_after_ms : 0;
+    }
+}
+
+void Session::scheduleRetry(uint32_t atLeastMs, const char* why) {
+    _backoffMs = _backoffMs == 0 ? kRetryBaseMs : (_backoffMs * 2 > kRetryMaxMs ? kRetryMaxMs : _backoffMs * 2);
+    const uint32_t base = atLeastMs > _backoffMs ? atLeastMs : _backoffMs;
+    const uint32_t delay = base + esp_random() % (base / 4 + 1);  // jitter: two remotes never retry in step
+    _retryAtMs = _nowMs + delay;
+    if (_client->state() != valence::ClientSessionState::CLOSED) _client->disconnect();
+    _ws.stop();
+    ESP_LOGW(kTag, "%s: retrying in %u ms", why, unsigned(delay));
 }
 
 void Session::onPairGrant(std::span<const std::byte> token, valence::AccessLevel r) {

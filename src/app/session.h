@@ -86,6 +86,9 @@ private:
     void buildClient();
     void tickWifi(uint32_t nowMs);
     void setStatus(const char* fmt, ...);
+    // Leaves the hub (session and socket) and comes back after a jittered,
+    // doubling delay of at least `atLeastMs` (a NACK's retry_after_ms).
+    void scheduleRetry(uint32_t atLeastMs, const char* why);
     float current(const Setting& s);
 
     LinkMode _mode = LinkMode::Wifi;
@@ -118,6 +121,9 @@ private:
     // died unanswered with a session. Shown on the strip for kLossShowMs.
     uint32_t _writesLost = 0;
     uint32_t _stallOnSyncMs = 0;
+    uint32_t _backoffMs = 0;  // 0 after LIVE; doubles per failed attempt
+    bool _busyRetry = false;
+    uint32_t _busyRetryMs = 0;
     uint32_t _lossSeen = 0;
     uint32_t _lossAtMs = 0;
 
