@@ -12,6 +12,8 @@
 #include "esp_random.h"
 #include "esp_timer.h"
 #include "net/wifi.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "nvs.h"
 
 namespace garnet {
@@ -24,6 +26,7 @@ constexpr uint32_t kWelcomeTimeoutMs = 5000;
 constexpr uint32_t kHandshakeTimeoutMs = 15000;  // the readiness gate's own bound (§6.4)
 constexpr uint32_t kStaleMs = 3000;  // ~3 idle PING intervals with no answer
 constexpr uint32_t kNudgeHoldMs = 1000;
+constexpr uint32_t kLossShowMs = 10000;
 
 void nvsBlob(const char* key, void* out, size_t len) {
     nvs_handle_t h;
@@ -63,7 +66,7 @@ void Session::EspRandom::fill(std::span<std::byte> out) { esp_fill_random(out.da
 bool Session::sendDatagram(void* ctx, std::span<const std::byte> d) {
     auto* self = static_cast<Session*>(ctx);
     const bool bcast = self->_udp.sendTo(wifi::broadcast_ipv4(), d);
-    const bool uni = self->_udp.sendTo(self->_hubIp, d);
+    const bool uni = self->_udp.sendTo(self->_activeIp, d);
     return bcast || uni;
 }
 
@@ -78,6 +81,9 @@ void Session::begin() {
     nvsBlob("token", _id.token.data(), _id.token.size());
     for (auto b : _id.token) _id.hasToken = _id.hasToken || b != std::byte{0};
     nvsBlob("hub_iid", &_savedHubId, sizeof(_savedHubId));
+    nvsBlob("hub_ip", &_hubIp, sizeof(_hubIp));
+    nvsBlob("hub_port", &_hubPort, sizeof(_hubPort));
+    if (_hubIp != 0) std::snprintf(_hubName, sizeof(_hubName), "typed address");
     uint8_t m = 0;
     nvsBlob("link", &m, 1);
     _mode = m == 1 ? LinkMode::Tether : LinkMode::Wifi;
@@ -132,13 +138,21 @@ void Session::setMode(LinkMode m) {
 void Session::connectTo(uint32_t ipv4, uint16_t port) {
     _hubIp = ipv4;
     _hubPort = port;
+    nvsPutBlob("hub_ip", &_hubIp, sizeof(_hubIp));
+    nvsPutBlob("hub_port", &_hubPort, sizeof(_hubPort));
+    _client->disconnect();
     std::snprintf(_hubName, sizeof(_hubName), "typed address");
-    if (_mode == LinkMode::Wifi && wifi::state() == wifi::State::Connected) _ws.start(ipv4, port);
+    if (_mode == LinkMode::Wifi && wifi::state() == wifi::State::Connected) {
+        _activeIp = ipv4;
+        _ws.start(ipv4, port);
+    }
 }
 
 void Session::forgetHub() {
     _savedHubId = 0;
     nvsPutBlob("hub_iid", nullptr, 0);
+    nvsPutBlob("hub_ip", nullptr, 0);
+    nvsPutBlob("hub_port", nullptr, 0);
     _client->disconnect();
     _ws.stop();
     _hubIp = 0;
@@ -165,6 +179,11 @@ void Session::tickWifi(uint32_t nowMs) {
         return;
     }
     if (!_udp.isOpen()) _udp.open();
+    if (!_ws.started() && _hubIp != 0) {  // a typed address outranks discovery
+        _activeIp = _hubIp;
+        _ws.start(_hubIp, _hubPort);
+        return;
+    }
     if (!_ws.started()) {
         uint32_t ip = 0;
         uint16_t port = 0;
@@ -179,13 +198,8 @@ void Session::tickWifi(uint32_t nowMs) {
                 _savedHubId = iid;
                 nvsPutBlob("hub_iid", &iid, sizeof(iid));
             }
-            _hubIp = ip;
-            _hubPort = port;
+            _activeIp = ip;
             _ws.start(ip, port);
-            return;
-        }
-        if (_hubIp != 0) {
-            _ws.start(_hubIp, _hubPort);
             return;
         }
         if (timeDiff(nowMs, _lastProbeMs) >= kProbeEveryMs) {
@@ -222,6 +236,11 @@ void Session::tick(uint32_t nowUs) {
         }
     }
     _client->update(nowUs);
+    if (_stallOnSyncMs != 0 && _client->state() == valence::ClientSessionState::SYNCING) {
+        ESP_LOGW(kTag, "bench: UI task stalls %u ms inside the catalog transfer", unsigned(_stallOnSyncMs));
+        vTaskDelay(pdMS_TO_TICKS(_stallOnSyncMs));
+        _stallOnSyncMs = 0;
+    }
 
     const auto st = _client->state();
     const uint32_t handshakeMs = timeDiff(_nowMs, _connectStartMs);
@@ -247,6 +266,23 @@ void Session::tick(uint32_t nowUs) {
 
     _datagram.update(_nowMs);
     if (_haltPending && estopLatched()) _haltPending = false;
+
+    const uint32_t lost = _ws.unsent() + _writesLost;
+    if (lost != _lossSeen) {
+        ESP_LOGW(kTag, "%u frame(s) or write(s) lost to the link (total %u)", unsigned(lost - _lossSeen), unsigned(lost));
+        _lossSeen = lost;
+        _lossAtMs = _nowMs;
+    }
+}
+
+void Session::printLinkStats() const {
+    std::printf("link: ws %s, unsent %u, rx dropped %u, writes lost %u, catalog requests %u, rx age %u ms\n",
+                _ws.connected() ? "up" : "down", unsigned(_ws.unsent()), unsigned(_ws.rxDropped()),
+                unsigned(_writesLost), unsigned(_client->catalogReqCount()), unsigned(_client->rxAgeMs()));
+}
+
+uint32_t Session::lostRecently() const {
+    return _lossAtMs != 0 && timeDiff(_nowMs, _lossAtMs) < kLossShowMs ? _lossSeen : 0;
 }
 
 bool Session::linkStale() const { return live() && _client->rxAgeMs() > kStaleMs; }

@@ -44,6 +44,13 @@ public:
     bool paired() const { return _id.hasToken; }
     const char* hubName() const { return _hubName; }
     const char* status() const { return _status; }
+    // Total frames and writes lost to the link, while the last loss is recent
+    // (the strip shows it); 0 otherwise.
+    uint32_t lostRecently() const;
+    // Bench: block the UI task for `ms` once the next catalog transfer starts,
+    // to prove the link keeps reading while the consumer is stalled.
+    void stallOnSync(uint32_t ms) { _stallOnSyncMs = ms; }
+    void printLinkStats() const;
     Model& model() { return *_model; }
     TetherLink& tether() { return _tether; }
 
@@ -62,7 +69,7 @@ public:
     void onState(uint16_t ch, uint16_t seq, std::span<const std::byte> payload) override;
     void onEcho(uint16_t, const valence::IntentValueMap&, uint16_t) override {}
     void onNack(const valence::NackMsg& n) override;
-    void onPendingDropped(uint16_t) override {}
+    void onPendingDropped(uint16_t) override { ++_writesLost; }
     void onPairGrant(std::span<const std::byte> token, valence::AccessLevel roles) override;
     void onCatalog(std::span<const std::byte> encoded, bool verified) override;
 
@@ -94,7 +101,8 @@ private:
     valence::EstopDatagramSender _datagram{&Session::sendDatagram, this, 0};
 
     uint32_t _nowMs = 0;
-    uint32_t _hubIp = 0;
+    uint32_t _hubIp = 0;     // a typed address (persisted); 0 = discover
+    uint32_t _activeIp = 0;  // the hub the link targets now
     uint16_t _hubPort = 0;
     uint64_t _savedHubId = 0;
     char _hubName[33] = "";
@@ -106,6 +114,12 @@ private:
     bool _rebuild = false;
     bool _haltPending = false;
     uint32_t _haltAtMs = 0;
+    // Health (no silent loss): frames the link could not send, intents that
+    // died unanswered with a session. Shown on the strip for kLossShowMs.
+    uint32_t _writesLost = 0;
+    uint32_t _stallOnSyncMs = 0;
+    uint32_t _lossSeen = 0;
+    uint32_t _lossAtMs = 0;
 
     // A nudge between a write and its STATE builds on what was asked, not on
     // the stale shown value.

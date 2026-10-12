@@ -76,6 +76,11 @@ void command(char* line) {
                         double(st.min()), double(st.max()), double(st.step()),
                         s.model().enabled(st, s.roles()) ? "" : " (disabled)");
         }
+    } else if (is("linkstat")) {
+        s.printLinkStats();
+    } else if (is("stallsync")) {
+        const char* ms = token(p);
+        s.stallOnSync(uint32_t(ms ? std::atoi(ms) : 3000));
     } else if (is("catdump")) {
         const auto b = s.model().bytes();
         for (size_t off = 0; off < b.size(); off += 768) {

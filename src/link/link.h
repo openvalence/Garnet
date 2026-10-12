@@ -30,31 +30,52 @@ private:
     std::atomic<uint32_t> _dropped{0};
 };
 
-// SPEC §13.2: one binary WS message per Valence frame, subprotocol valence.v1.
-// The esp_websocket_client task reconnects on its own; open() reports whether
-// the socket is up now, so the session calls Client::connect() only then.
+// SPEC §13.2: one binary WS message per Valence frame, subprotocol valence.v1,
+// on a plain lwIP socket. Two tasks, no shared lock:
+// - the reader task owns the connection (connect, upgrade, reconnect) and
+//   reads frames into the RX queue; it never waits on a send;
+// - the writer task drains the TX queue into the socket. Only it sends.
+// write() only enqueues, so the UI task never blocks on the network. A frame
+// that cannot be queued or sent is counted in unsent(), never dropped
+// silently (the session shows the count).
+// Constraint: a hub stops serving a client that stops reading (Nucleus drops
+// a control slot stalled 2 s), which is why receive must never wait on send.
 class WsLink final : public valence::ITransport {
 public:
     WsLink();
-    void start(uint32_t ipv4, uint16_t port);  // network byte order ip
-    void stop();                               // blocks while the WS task exits
-    bool started() const { return _client != nullptr; }
+    void start(uint32_t ipv4, uint16_t port);  // network byte order ip; (re)targets the link
+    void stop();                               // drops the connection and forgets the target
+    bool started() const { return _ip.load() != 0; }
     bool connected() const { return _connected.load(); }
+    uint32_t unsent() const { return _unsent.load(); }
+    uint32_t rxDropped() const { return _rx.dropped(); }
 
     bool open() override { return connected(); }
-    void close() override { _rx.clear(); }
+    // Ends this socket: the next Client session gets a fresh one.
+    void close() override;
     bool write(std::span<const std::byte> frame) override;
     std::optional<valence::FrameBuffer> read() override { return _rx.pop(); }
     valence::TransportProperties properties() const override;
 
-    // WS task only.
-    void onEvent(int32_t id, void* data);
+    void readerTask();  // task bodies, public for the task trampolines
+    void writerTask();
 
 private:
-    void* _client = nullptr;  // esp_websocket_client_handle_t
+    bool connectAndUpgrade(int fd);
+    bool readExact(int fd, uint8_t* p, size_t n);
+    void sendControl(uint8_t opcode, const uint8_t* p, size_t n);
+    void drop();
+
+    std::atomic<uint32_t> _ip{0};
+    std::atomic<uint16_t> _port{0};
+    std::atomic<int> _fd{-1};
     std::atomic<bool> _connected{false};
+    std::atomic<bool> _dropRequested{false};
+    std::atomic<bool> _txBusy{false};
+    std::atomic<uint32_t> _unsent{0};
     FrameQueue _rx;
-    std::byte* _frag = nullptr;  // reassembly of a fragmented message, WS task only
+    QueueHandle_t _tx;  // TxItem, PSRAM
+    bool _tasksStarted = false;
 };
 
 // Bench link over the USB console: frames travel as "@V <base64>" lines and

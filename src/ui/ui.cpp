@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -201,8 +202,13 @@ void refreshStrip() {
     } else {
         std::snprintf(buf, sizeof(buf), "%s", s.status());
     }
+    const uint32_t lost = s.lostRecently();
+    if (lost) {
+        const size_t used = std::strlen(buf);
+        std::snprintf(buf + used, sizeof(buf) - used, " | %u NOT SENT", unsigned(lost));
+    }
     lv_label_set_text(u.stripStatus, buf);
-    lv_obj_set_style_bg_color(u.strip, lv_color_hex(live && !stale ? kPanel : kRedDark), 0);
+    lv_obj_set_style_bg_color(u.strip, lv_color_hex(live && !stale && !lost ? kPanel : kRedDark), 0);
 }
 
 // ---- status tab ---------------------------------------------------------------
