@@ -58,6 +58,9 @@ public:
     void pauseToggle();
     void releaseHalt();
     void knock();
+    // RFC-114: a knock asking for `configure`; the operator double-presses the
+    // hub's Pair button (or a configure session approves it).
+    void askConfigure();
     bool write(const Setting& s, float physical);
     bool nudge(const Setting& s, int dir);
     bool toggle(const Setting& s);

@@ -327,9 +327,14 @@ void Session::releaseHalt() {
 }
 
 void Session::knock() {
-    if (live()) {
-        _client->sendPairKnock();
-        setStatus("Control requested: approve it on the hub");
+    if (live() && _client->sendPairKnock()) {
+        ESP_LOGI(kTag, "knock sent: approve it in a configure client (Phosphor: Pairing, Pending knocks)");
+    }
+}
+
+void Session::askConfigure() {
+    if (live() && _client->sendPairKnock(valence::AccessLevel::configure)) {
+        ESP_LOGI(kTag, "configure ask sent: double-press the hub's Pair button");
     }
 }
 

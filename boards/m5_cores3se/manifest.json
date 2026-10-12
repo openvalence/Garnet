@@ -1,0 +1,16 @@
+{
+  "board": "m5_cores3se",
+  "name": "M5Stack CoreS3 SE",
+  "view": "front, screen facing the user; button positions approximate, check against the unit",
+  "image": { "file": "board.svg", "width": 540, "height": 540, "px_per_mm": 10 },
+  "outline": { "x": 0, "y": 0, "w": 540, "h": 540, "r": 40 },
+  "screen": { "x": 66, "y": 70, "w": 408, "h": 306 },
+  "features": [
+    { "label": "USB-C", "x": 230, "y": 520, "w": 80, "h": 20 },
+    { "label": "RST", "x": 520, "y": 420, "w": 20, "h": 50 }
+  ],
+  "inputs": [
+    { "id": "power", "kind": "button", "label": "PWR", "x": 0, "y": 80, "w": 20, "h": 60 },
+    { "id": "screen", "kind": "touch_zone", "label": "Touchscreen", "x": 66, "y": 70, "w": 408, "h": 306 }
+  ]
+}

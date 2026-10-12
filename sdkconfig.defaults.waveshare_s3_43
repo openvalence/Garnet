@@ -1,0 +1,8 @@
+# Waveshare ESP32-S3-Touch-LCD-4.3: 8 MB QIO flash, 8 MB octal PSRAM in package.
+CONFIG_ESPTOOLPY_FLASHSIZE_8MB=y
+CONFIG_SPIRAM_MODE_OCT=y
+# The RGB panel scans out of PSRAM: keep the cache alive during flash writes
+# (NVS, OTA) or the picture drifts (Espressif LCD FAQ).
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_LCD_RGB_ISR_IRAM_SAFE=y

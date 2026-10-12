@@ -20,7 +20,6 @@ namespace garnet::ui {
 namespace {
 
 constexpr const char* kTag = "ui";
-constexpr int kStripH = 64;
 constexpr uint32_t kReleaseHoldMs = 3000;  // RFC-085: release is a held press
 constexpr uint32_t kRefreshMs = 100;
 
@@ -39,6 +38,25 @@ struct Row {
     lv_obj_t* widget = nullptr;
     lv_obj_t* value = nullptr;
 };
+
+// Every size the screens use, picked once by screen width: the safety strip
+// shrinks with the screen and is never dropped.
+struct Metrics {
+    int stripH, btnH, haltW, pauseW, pauseRight, statusW;
+    const lv_font_t* font;
+    const lv_font_t* big;
+    const lv_font_t* small;
+    int barW, tabH, rowH, nameW, widgetX, widgetW;
+    float boardW, boardH;
+    int sideW, sideH, textW, pickW, pad;
+};
+constexpr Metrics kLarge{64, 52, 220, 150, 232, 380, &lv_font_montserrat_20, &lv_font_montserrat_28,
+                         &lv_font_montserrat_14, 740, 52, 72, 250, 280, 300, 420.0f, 270.0f, 330, 300, 310,
+                         300, 6};
+constexpr Metrics kCompact{40, 34, 100, 72, 106, 132, &lv_font_montserrat_14, &lv_font_montserrat_20,
+                           &lv_font_montserrat_12, 290, 30, 44, 100, 104, 110, 150.0f, 96.0f, 150, 140, 145,
+                           140, 3};
+const Metrics* mx = &kLarge;
 
 enum class MapStep : uint8_t { Idle, WaitPress, Pick };
 
@@ -69,6 +87,7 @@ struct Ui {
     lv_obj_t* wifiLbl = nullptr;
     lv_obj_t* linkBtnLbl = nullptr;
     lv_obj_t* knockBtn = nullptr;
+    lv_obj_t* askBtn = nullptr;
 
     std::vector<Input> inputs;  // physical inputs, manifest order (bsp bit order)
     lv_obj_t* mapText = nullptr;
@@ -88,8 +107,8 @@ Ui u;
 
 uint32_t nowMs() { return uint32_t(esp_timer_get_time() / 1000); }
 
-lv_obj_t* label(lv_obj_t* parent, const char* text, const lv_font_t* font = &lv_font_montserrat_20,
-                uint32_t color = kText) {
+lv_obj_t* label(lv_obj_t* parent, const char* text, const lv_font_t* font = nullptr, uint32_t color = kText) {
+    if (!font) font = mx->font;
     lv_obj_t* l = lv_label_create(parent);
     lv_label_set_text(l, text);
     lv_obj_set_style_text_font(l, font, 0);
@@ -140,30 +159,30 @@ void pauseEvent(lv_event_t*) { u.session->pauseToggle(); }
 
 void buildStrip() {
     u.strip = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(u.strip, bsp::caps().width, kStripH);
+    lv_obj_set_size(u.strip, bsp::caps().width, mx->stripH);
     lv_obj_set_pos(u.strip, 0, 0);
     lv_obj_set_style_radius(u.strip, 0, 0);
     lv_obj_set_style_border_width(u.strip, 0, 0);
-    lv_obj_set_style_pad_all(u.strip, 6, 0);
+    lv_obj_set_style_pad_all(u.strip, mx->pad, 0);
     lv_obj_set_style_bg_color(u.strip, lv_color_hex(kPanel), 0);
     lv_obj_remove_flag(u.strip, LV_OBJ_FLAG_SCROLLABLE);
 
-    u.stripStatus = label(u.strip, "starting", &lv_font_montserrat_20, kText);
-    lv_obj_set_width(u.stripStatus, 380);
+    u.stripStatus = label(u.strip, "starting", mx->font, kText);
+    lv_obj_set_width(u.stripStatus, mx->statusW);
     lv_label_set_long_mode(u.stripStatus, LV_LABEL_LONG_DOT);
     lv_obj_align(u.stripStatus, LV_ALIGN_LEFT_MID, 4, 0);
 
     u.pauseBtn = button(u.strip, "Pause", pauseEvent, &u.pauseLbl);
-    lv_obj_set_size(u.pauseBtn, 150, 52);
-    lv_obj_align(u.pauseBtn, LV_ALIGN_RIGHT_MID, -232, 0);
+    lv_obj_set_size(u.pauseBtn, mx->pauseW, mx->btnH);
+    lv_obj_align(u.pauseBtn, LV_ALIGN_RIGHT_MID, -mx->pauseRight, 0);
     lv_obj_set_style_bg_color(u.pauseBtn, lv_color_hex(kAmber), 0);
     lv_obj_set_style_text_color(u.pauseLbl, lv_color_hex(0x101010), 0);
 
     u.haltBtn = lv_button_create(u.strip);
-    lv_obj_set_size(u.haltBtn, 220, 52);
+    lv_obj_set_size(u.haltBtn, mx->haltW, mx->btnH);
     lv_obj_align(u.haltBtn, LV_ALIGN_RIGHT_MID, 0, 0);
     lv_obj_set_style_bg_color(u.haltBtn, lv_color_hex(kRed), 0);
-    u.haltLbl = label(u.haltBtn, "HALT", &lv_font_montserrat_20);
+    u.haltLbl = label(u.haltBtn, "HALT", mx->font);
     lv_obj_center(u.haltLbl);
     lv_obj_add_event_cb(u.haltBtn, haltEvent, LV_EVENT_ALL, nullptr);
 }
@@ -215,12 +234,14 @@ void refreshStrip() {
 
 void buildStatus(lv_obj_t* tab) {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
-    label(tab, "Position", &lv_font_montserrat_14, kDim);
-    u.posLbl = label(tab, "--", &lv_font_montserrat_28);
+    label(tab, "Position", mx->small, kDim);
+    u.posLbl = label(tab, "--", mx->big);
     u.posBar = lv_bar_create(tab);
-    lv_obj_set_size(u.posBar, 740, 28);
+    lv_obj_set_size(u.posBar, mx->barW, mx->btnH / 2);
     u.safetyLbl = label(tab, "");
-    u.roleLbl = label(tab, "", &lv_font_montserrat_14, kDim);
+    u.roleLbl = label(tab, "", mx->small, kDim);
+    lv_obj_set_width(u.roleLbl, mx->barW);
+    lv_label_set_long_mode(u.roleLbl, LV_LABEL_LONG_WRAP);
 }
 
 void refreshStatus() {
@@ -274,24 +295,25 @@ void rebuildControls() {
     Model& m = u.session->model();
     u.modelGen = m.generation();
     if (!m.loaded()) {
-        label(u.controls, "Waiting for the hub's catalog.", &lv_font_montserrat_20, kDim);
+        label(u.controls, "Waiting for the hub's catalog.", mx->font, kDim);
         return;
     }
     u.rows.reserve(m.settings().size());
     for (const Setting& s : m.settings()) {
         lv_obj_t* row = lv_obj_create(u.controls);
-        lv_obj_set_size(row, LV_PCT(100), 72);
+        lv_obj_set_size(row, LV_PCT(100), mx->rowH);
+        lv_obj_set_style_pad_all(row, mx->pad, 0);
         lv_obj_set_style_bg_color(row, lv_color_hex(kPanel), 0);
         lv_obj_remove_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_t* name = label(row, "", &lv_font_montserrat_20);
+        lv_obj_t* name = label(row, "", mx->font);
         lv_label_set_text_fmt(name, "%.*s", int(s.name().size()), s.name().data());
-        lv_obj_set_width(name, 250);
+        lv_obj_set_width(name, mx->nameW);
         lv_label_set_long_mode(name, LV_LABEL_LONG_DOT);
         lv_obj_align(name, LV_ALIGN_LEFT_MID, 0, 0);
         Row r{&s, nullptr, nullptr};
         if (s.isToggle()) {
             r.widget = lv_switch_create(row);
-            lv_obj_align(r.widget, LV_ALIGN_LEFT_MID, 280, 0);
+            lv_obj_align(r.widget, LV_ALIGN_LEFT_MID, mx->widgetX, 0);
             lv_obj_add_event_cb(r.widget, rowEvent, LV_EVENT_VALUE_CHANGED, nullptr);
         } else if (s.hasOptions()) {
             r.widget = lv_dropdown_create(row);
@@ -301,18 +323,18 @@ void rebuildControls() {
                 opts += m.optionLabel(s, i);
             }
             lv_dropdown_set_options(r.widget, opts.c_str());
-            lv_obj_set_width(r.widget, 300);
-            lv_obj_align(r.widget, LV_ALIGN_LEFT_MID, 280, 0);
+            lv_obj_set_width(r.widget, mx->widgetW);
+            lv_obj_align(r.widget, LV_ALIGN_LEFT_MID, mx->widgetX, 0);
             lv_obj_add_event_cb(r.widget, rowEvent, LV_EVENT_VALUE_CHANGED, nullptr);
         } else {
             r.widget = lv_slider_create(row);
             lv_slider_set_range(r.widget, 0, toTicks(s, s.max()));
-            lv_obj_set_width(r.widget, 300);
-            lv_obj_align(r.widget, LV_ALIGN_LEFT_MID, 290, 0);
+            lv_obj_set_width(r.widget, mx->widgetW);
+            lv_obj_align(r.widget, LV_ALIGN_LEFT_MID, mx->widgetX + 10, 0);
             lv_obj_add_event_cb(r.widget, rowEvent, LV_EVENT_RELEASED, nullptr);
         }
         lv_obj_set_style_opa(r.widget, LV_OPA_40, LV_STATE_DISABLED);
-        r.value = label(row, "--", &lv_font_montserrat_20, kDim);
+        r.value = label(row, "--", mx->small, kDim);
         lv_obj_align(r.value, LV_ALIGN_RIGHT_MID, 0, 0);
         u.rows.push_back(r);
     }
@@ -358,19 +380,25 @@ void refreshControls() {
 void forgetWifi(lv_event_t*) { wifi::forget(); }
 void forgetHub(lv_event_t*) { u.session->forgetHub(); }
 void knock(lv_event_t*) { u.session->knock(); }
+void askConfigure(lv_event_t*) { u.session->askConfigure(); }
 void toggleLink(lv_event_t*) {
     u.session->setMode(u.session->mode() == LinkMode::Wifi ? LinkMode::Tether : LinkMode::Wifi);
 }
 
 void buildSetup(lv_obj_t* tab) {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
-    u.wifiLbl = label(tab, "");
+    u.wifiLbl = label(tab, "", mx->small);
+    lv_obj_set_width(u.wifiLbl, LV_PCT(100));
+    lv_label_set_long_mode(u.wifiLbl, LV_LABEL_LONG_WRAP);
     lv_obj_t* row = lv_obj_create(tab);
-    lv_obj_set_size(row, LV_PCT(100), 80);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_style_pad_all(row, mx->pad, 0);
+    lv_obj_set_style_pad_gap(row, mx->pad * 2, 0);
     lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(row, 0, 0);
     u.knockBtn = button(row, "Request control", knock);
+    u.askBtn = button(row, "Ask configure", askConfigure);
     button(row, "Forget hub", forgetHub);
     button(row, "Forget WiFi", forgetWifi);
     button(row, "Link: WiFi", toggleLink, &u.linkBtnLbl);
@@ -394,6 +422,7 @@ void refreshSetup() {
     }
     lv_label_set_text(u.linkBtnLbl, s.mode() == LinkMode::Wifi ? "Link: WiFi" : "Link: tether");
     setEnabled(u.knockBtn, s.live() && s.roles() == valence::AccessLevel::watch);
+    setEnabled(u.askBtn, s.live() && s.roles() != valence::AccessLevel::configure);
 }
 
 // ---- map tab --------------------------------------------------------------------
@@ -509,7 +538,7 @@ void buildMap(lv_obj_t* tab) {
     const cJSON* img = cJSON_GetObjectItem(m, "image");
     const float iw = img ? float(cJSON_GetObjectItem(img, "width")->valuedouble) : 1.0f;
     const float ih = img ? float(cJSON_GetObjectItem(img, "height")->valuedouble) : 1.0f;
-    constexpr float kW = 420.0f, kH = 270.0f;
+    const float kW = mx->boardW, kH = mx->boardH;
     const float k = std::fmin(kW / iw, kH / ih);
     lv_obj_t* board = lv_obj_create(tab);
     lv_obj_set_size(board, int32_t(iw * k) + 8, int32_t(ih * k) + 8);
@@ -546,28 +575,28 @@ void buildMap(lv_obj_t* tab) {
         }
         Input x{cJSON_GetObjectItem(in, "id")->valuestring, cJSON_GetObjectItem(in, "label")->valuestring, kind};
         x.box = rect(in, kAmber, LV_OPA_COVER, kAmber);
-        lv_obj_t* tag = label(board, x.label.c_str(), &lv_font_montserrat_14, kAmber);
+        lv_obj_t* tag = label(board, x.label.c_str(), mx->small, kAmber);
         lv_obj_align_to(tag, x.box, LV_ALIGN_OUT_BOTTOM_MID, 0, 2);
         u.inputs.push_back(std::move(x));
     }
     cJSON_Delete(m);
 
     lv_obj_t* side = lv_obj_create(tab);
-    lv_obj_set_size(side, 330, 300);
+    lv_obj_set_size(side, mx->sideW, mx->sideH);
     lv_obj_align(side, LV_ALIGN_TOP_RIGHT, 0, 0);
     lv_obj_set_flex_flow(side, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_bg_opa(side, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(side, 0, 0);
-    u.mapText = label(side, "", &lv_font_montserrat_20);
-    lv_obj_set_width(u.mapText, 310);
+    u.mapText = label(side, "", mx->font);
+    lv_obj_set_width(u.mapText, mx->textW);
     lv_label_set_long_mode(u.mapText, LV_LABEL_LONG_WRAP);
     u.mapPick = lv_dropdown_create(side);
-    lv_obj_set_width(u.mapPick, 300);
+    lv_obj_set_width(u.mapPick, mx->pickW);
     u.mapSave = button(side, "Save", mapSaveEvent);
     u.mapSkip = button(side, "Skip", mapSkipEvent);
     u.mapStart = button(side, "Map inputs", mapStartEvent);
     setEnabled(u.mapStart, !u.inputs.empty());
-    u.mapList = label(tab, "", &lv_font_montserrat_14, kDim);
+    u.mapList = label(tab, "", mx->small, kDim);
     lv_obj_align(u.mapList, LV_ALIGN_BOTTOM_LEFT, 0, 0);
     setStep(MapStep::Idle);
 }
@@ -604,15 +633,17 @@ void onPress(size_t i) {
 void build(Session& session, Mapping& mapping) {
     u.session = &session;
     u.mapping = &mapping;
+    mx = bsp::caps().width < 480 ? &kCompact : &kLarge;
+    lv_obj_set_style_text_font(lv_screen_active(), mx->font, 0);
     lv_obj_t* scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x05080B), 0);
     lv_obj_set_style_text_color(scr, lv_color_hex(kText), 0);
 
     u.tabs = lv_tabview_create(scr);
     lv_tabview_set_tab_bar_position(u.tabs, LV_DIR_BOTTOM);
-    lv_tabview_set_tab_bar_size(u.tabs, 52);
-    lv_obj_set_size(u.tabs, bsp::caps().width, bsp::caps().height - kStripH);
-    lv_obj_set_pos(u.tabs, 0, kStripH);
+    lv_tabview_set_tab_bar_size(u.tabs, mx->tabH);
+    lv_obj_set_size(u.tabs, bsp::caps().width, bsp::caps().height - mx->stripH);
+    lv_obj_set_pos(u.tabs, 0, mx->stripH);
     lv_obj_set_style_bg_color(u.tabs, lv_color_hex(0x05080B), 0);
     buildStatus(lv_tabview_add_tab(u.tabs, "Status"));
     u.controls = lv_tabview_add_tab(u.tabs, "Controls");

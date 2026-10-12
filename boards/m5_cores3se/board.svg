@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 540 540" width="540" height="540">
+<title>M5Stack CoreS3 SE (front, screen facing the user; button positions approximate, check against the unit)</title>
+<rect x="0" y="0" width="540" height="540" rx="40" fill="#1d2a22" stroke="#6a7a70" stroke-width="3" />
+<rect x="66" y="70" width="408" height="306" rx="4" fill="#05070a" stroke="#3a4450" stroke-width="3" />
+<rect x="230" y="520" width="80" height="20" rx="4" fill="#2c3530" stroke="#6a7a70" stroke-width="3" />
+<text x="270.0" y="537.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#9aa8a0">USB-C</text>
+<rect x="520" y="420" width="20" height="50" rx="4" fill="#2c3530" stroke="#6a7a70" stroke-width="3" />
+<text x="530.0" y="452.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#9aa8a0">RST</text>
+<rect x="0" y="80" width="20" height="60" rx="4" fill="#e0a030" stroke="#e0a030" stroke-width="3" />
+<text x="10.0" y="117.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">PWR [power]</text>
+<rect x="66" y="70" width="408" height="306" rx="4" fill="none" stroke="#40b070" stroke-width="3" stroke-dasharray="12 8"/>
+<text x="270.0" y="230.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#40b070">Touchscreen [screen]</text>
+</svg>

@@ -115,6 +115,8 @@ void command(char* line) {
         s.releaseHalt();
     } else if (is("knock")) {
         s.knock();
+    } else if (is("askconfigure")) {
+        s.askConfigure();
     } else if (is("press")) {
         const char* i = token(p);
         garnet::ui::injectPress(i ? std::atoi(i) : 0);
