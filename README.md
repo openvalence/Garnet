@@ -17,10 +17,24 @@ Embedded Valence client firmware for handheld remotes.
 PlatformIO with the pioarduino platform, framework `espidf` (ESP-IDF 5.x),
 LVGL 9.
 
+## Build, flash, bench
+
+```
+pio run -e waveshare_s3_43
+pio run -e waveshare_s3_43 -t upload --upload-port COMxx   # name the port, every time
+python tools/tether_bridge.py --port COMxx --hub ws://127.0.0.1:82/ --log artifacts/serial.log
+```
+
+On the board's console, `link tether` routes the session through the bridge to
+a hub's WebSocket (valencesim on this PC); `wifi <ssid> <pass>` and
+`link wifi` use the WiFi path. `help` lists the rest.
+
 ## Layout
 
 - `docs/DESIGN.md`: design rulings and open questions.
-- The Valence client library (MIT) lives in `../Valence/lib/valence`.
+- The Valence client library (MIT) lives in `../Valence/lib/valence`; until
+  `feat/client-lib` merges, the build reads `../Valence-clientlib` at the sha in
+  `valence.pin`.
 - Volatile status lives on the dev board: `bd ready` (prefix `gar`).
 
 ## License

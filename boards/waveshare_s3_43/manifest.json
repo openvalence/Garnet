@@ -1,0 +1,17 @@
+{
+  "board": "waveshare_s3_43",
+  "name": "Waveshare ESP32-S3-Touch-LCD-4.3",
+  "view": "front, screen facing the user, USB connectors on the right edge",
+  "image": { "file": "board.svg", "width": 1060, "height": 680, "px_per_mm": 10 },
+  "outline": { "x": 0, "y": 0, "w": 1060, "h": 680, "r": 30 },
+  "screen": { "x": 53, "y": 44, "w": 955, "h": 543 },
+  "features": [
+    { "label": "RESET", "x": 437, "y": 4, "w": 60, "h": 26 },
+    { "label": "UART", "x": 1010, "y": 99, "w": 50, "h": 60 },
+    { "label": "USB", "x": 1010, "y": 299, "w": 50, "h": 60 }
+  ],
+  "inputs": [
+    { "id": "boot", "kind": "button", "label": "BOOT", "x": 545, "y": 4, "w": 70, "h": 26 },
+    { "id": "screen", "kind": "touch_zone", "label": "Touchscreen", "x": 53, "y": 44, "w": 955, "h": 543 }
+  ]
+}
