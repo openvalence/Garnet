@@ -71,6 +71,7 @@ private:
     std::atomic<int> _fd{-1};
     std::atomic<bool> _connected{false};
     std::atomic<bool> _dropRequested{false};
+    std::atomic<bool> _closing{false};  // the drop was asked for: nothing it discards is a loss
     std::atomic<bool> _txBusy{false};
     std::atomic<uint32_t> _unsent{0};
     FrameQueue _rx;

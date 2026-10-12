@@ -99,11 +99,13 @@ void WsLink::start(uint32_t ipv4, uint16_t port) {
 
 void WsLink::stop() {
     _ip = 0;
+    _closing = true;
     drop();
 }
 
 void WsLink::close() {
     _rx.clear();
+    _closing = true;
     drop();
 }
 
@@ -141,13 +143,14 @@ valence::TransportProperties WsLink::properties() const {
 
 bool WsLink::readExact(int fd, uint8_t* p, size_t n) {
     while (n > 0) {
+        if (_dropRequested) return false;  // checked every read: a busy hub never lets recv time out
         const ssize_t k = ::recv(fd, p, n, 0);
         if (k > 0) {
             p += k;
             n -= size_t(k);
             continue;
         }
-        if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK) && !_dropRequested) continue;  // poll tick
+        if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) continue;  // poll tick
         return false;
     }
     return true;
@@ -276,13 +279,19 @@ void WsLink::readerTask() {
             }
         }
 
-        ESP_LOGW(kTag, "link down");
+        const bool asked = _closing.load();
+        if (asked) {
+            ESP_LOGI(kTag, "closed for a new session");
+        } else {
+            ESP_LOGW(kTag, "link down");
+        }
         _connected = false;
         _fd = -1;
         ::shutdown(fd, SHUT_RDWR);  // unblocks a send in progress
         while (_txBusy.load()) vTaskDelay(pdMS_TO_TICKS(5));
         ::close(fd);
-        vTaskDelay(pdMS_TO_TICKS(kReconnectMs));
+        _closing = false;
+        vTaskDelay(pdMS_TO_TICKS(asked ? 200 : kReconnectMs));
     }
 }
 
@@ -304,7 +313,7 @@ void WsLink::writerTask() {
         if (xQueueReceive(_tx, it, pdMS_TO_TICKS(kRecvPollMs)) != pdPASS) continue;
         const int fd = _fd.load();
         if (fd < 0 || !_connected) {
-            if (it->opcode == kOpBin) _unsent.fetch_add(1);
+            if (it->opcode == kOpBin && !_closing) _unsent.fetch_add(1);
             continue;
         }
         size_t n = 0;
