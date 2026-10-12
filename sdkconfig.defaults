@@ -37,6 +37,7 @@ CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n
 
 CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_ESP_WIFI_11KV_SUPPORT=y
 
 # A hub drops a client that stops draining its socket (Nucleus: 2 s). The
 # defaults (6-segment mailbox, 5.7 KB window) stall a catalog burst; these let

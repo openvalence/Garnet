@@ -231,7 +231,11 @@ void on_event(void*, esp_event_base_t base, int32_t id, void* data) {
     bcast_ = e->ip_info.ip.addr | ~e->ip_info.netmask.addr;
     ip_ = e->ip_info.ip.addr;
     state_ = State::Connected;
-    ESP_LOGI(TAG, "connected to %s", ssid_);
+    wifi_ap_record_t ap{};
+    if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+      ESP_LOGI(TAG, "connected: bssid ..%02x:%02x, channel %u, rssi %d dBm", ap.bssid[4], ap.bssid[5],
+               unsigned(ap.primary), int(ap.rssi));
+    }
   }
 }
 
@@ -281,8 +285,14 @@ void apply_sta() {
   wifi_config_t sta{};
   memcpy(sta.sta.ssid, ssid_, strlen(ssid_));
   memcpy(sta.sta.password, pass_, strlen(pass_));
+  // Multi-AP site, one SSID: scan every channel, take the strongest BSSID,
+  // ignore ones too weak to hold, and let 802.11k/v steer later (as Nucleus
+  // 0.1.48 does).
   sta.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
   sta.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+  sta.sta.threshold.rssi = -85;
+  sta.sta.rm_enabled = 1;
+  sta.sta.btm_enabled = 1;
   sta.sta.pmf_cfg.capable = true;
   bool was_connected = state_ == State::Connected;
   state_ = State::Connecting;
@@ -292,7 +302,7 @@ void apply_sta() {
   if (!started_.exchange(true)) { esp_wifi_start(); return; }  // STA_START connects
   if (was_connected) { expect_disc_ = true; esp_wifi_disconnect(); }
   else esp_wifi_connect();
-  ESP_LOGI(TAG, "joining %s", ssid_);
+  ESP_LOGI(TAG, "joining the stored network");  // never log credentials, SSID included
 }
 
 bool load() {
