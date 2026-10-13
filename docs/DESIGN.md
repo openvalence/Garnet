@@ -49,7 +49,7 @@ design rulings.
 | `ui` (core 1) | LVGL, Session, Client, Model, Mapping, input scan | (it is the UI task) |
 | WebSocket client | the TCP socket | `FrameQueue` (link/link.h) |
 | `console` | the USB console reader | `FrameQueue` for "@V" frames, a command queue for the rest |
-| WiFi, lwIP, esp_timer, portal DNS and HTTP | the network stack | atomics in net/wifi.cpp |
+| WiFi, lwIP, esp_timer, portal DNS and HTTP | the network stack | atomics, plus one mutex over the saved list and join state, in net/wifi.cpp |
 
 The Client is not thread-safe and needs no locks: only the UI task calls it.
 A receive task copies each frame into a FreeRTOS queue. The UI task drains
@@ -199,7 +199,7 @@ mapped action is suspended while the flow runs.
 | Status | position (the field with role `telemetry.position`) as a number and a bar; the safety state in words; the access tier |
 | Controls | one row per writable setting: a switch for booleans, a dropdown for options, a slider otherwise. A slider writes on release with an absolute value. A row shows the hub's applied value and is disabled, never hidden, without the access or when its `meta.enabled_mask` bit is clear (§8.9). |
 | Map | the board drawing and the mapping flow (section 4) |
-| Setup | WiFi state or the portal SSID and passphrase; Request control (knock); Forget hub; Forget WiFi; link mode |
+| Setup | WiFi state or the portal SSID and passphrase; the saved networks (name, live marker, Up/Down/Remove per row); Add network (opens the portal; Cancel leaves it); Request control (knock); Forget hub; link mode |
 
 The strip's states:
 
@@ -233,9 +233,27 @@ does not advertise it, and valencesim has none.
 WiFi provisioning is a SoftAP captive portal: SSID `Garnet-XXXX`, a random
 8-digit WPA2 passphrase shown on the screen only, and a form at
 `http://192.168.4.1`. It works on every board, including ones with no touch
-input. The console `wifi <ssid> <pass>` does the same on the bench.
-Credentials live in Garnet's own NVS keys. The radio runs with power save
-off, so a stop never waits for a DTIM interval.
+input. The form adds a network to the saved list; the console `wifi <ssid>
+[pass]` does the same on the bench, with `wifi-list`, `wifi-rm <n>`,
+`wifi-mv <from> <to>` and `forget-wifi` (slot numbers, never names: the
+console output is a log).
+
+Up to 4 networks are saved (RFC-116, draft; `valence/net/saved_networks.hpp`)
+as one NVS blob `nets` in namespace `garnet`. A pre-RFC-116 `wifi_ssid` /
+`wifi_pass` pair becomes slot 1 on first boot and is erased. The join rule
+runs on boot and after every drop. One saved network connects directly. Two
+or more start an all-channel scan, then try the strongest visible first (a
+near tie within 3 dB goes to the earlier entry), then the unseen ones in
+list order, about 12 s per entry or until a disconnect reason. After the
+whole list fails the retry timer backs off (capped at 10 s) and the sequence
+restarts from the scan. Every join takes the strongest BSSID above -85 dBm.
+The screen is local and shows names; no log line carries an SSID or a
+passphrase (a slot number, the BSSID tail, channel and RSSI instead).
+Removing the live network is allowed and rejoins from the rest; removing the
+last one opens the portal. One mutex guards the list and the join state,
+because the UI task and the console call the edits while the event loop and
+the timer task run the join. The radio runs with power save off, so a stop
+never waits for a DTIM interval.
 
 Reconnects keep the catalog. The cached etag rides the next HELLO, so a
 reconnect to an unchanged hub downloads nothing (§6.7).

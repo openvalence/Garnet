@@ -177,7 +177,7 @@ void Session::tickWifi(uint32_t nowMs) {
         if (ws == wifi::State::Portal) {
             setStatus("WiFi setup: join %s", wifi::portal_ssid());
         } else {
-            setStatus("WiFi: joining %s", wifi::sta_ssid());
+            setStatus("WiFi: joining");
         }
         return;
     }

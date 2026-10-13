@@ -1,5 +1,8 @@
 # The Valence client library is header-only (MIT): an include path is the
 # whole of consuming it. The sibling Valence checkout, at the sha in valence.pin.
+if(DEFINED ENV{VALENCE_ROOT})
+    set(VALENCE_ROOT "$ENV{VALENCE_ROOT}")
+endif()
 if(NOT DEFINED VALENCE_ROOT)
     set(VALENCE_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../Valence")
 endif()

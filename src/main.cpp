@@ -21,6 +21,7 @@
 #include "mbedtls/base64.h"
 #include "net/wifi.h"
 #include "nvs_flash.h"
+#include "valence/net/saved_networks.hpp"
 #include "ui/ui.h"
 
 namespace {
@@ -94,9 +95,23 @@ void command(char* line) {
     } else if (is("wifi")) {
         const char* ssid = token(p);
         const char* pass = token(p);
-        std::printf("wifi: %s\n", ssid && garnet::wifi::set_credentials(ssid, pass ? pass : "") ? "saved, joining" : "usage: wifi <ssid> [pass]");
+        std::printf("wifi: %s\n", !ssid ? "usage: wifi <ssid> [pass]"
+                                  : garnet::wifi::add(ssid, pass ? pass : "") ? "saved" : "not saved (invalid, or 4 already saved)");
+    } else if (is("wifi-list")) {
+        std::printf("wifi: %d of %d saved, live slot %d\n", garnet::wifi::count(), garnet::wifi::kMaxNetworks,
+                    garnet::wifi::live() + 1);
+        for (int i = 0; i < garnet::wifi::count(); ++i) {
+            std::printf("  slot %d%s\n", i + 1, i == garnet::wifi::live() ? " (live)" : "");
+        }
+    } else if (is("wifi-rm")) {
+        const char* n = token(p);
+        std::printf("wifi-rm: %s\n", n && garnet::wifi::remove(std::atoi(n) - 1) ? "removed" : "usage: wifi-rm <slot>");
+    } else if (is("wifi-mv")) {
+        const char* a = token(p);
+        const char* b = token(p);
+        std::printf("wifi-mv: %s\n", a && b && garnet::wifi::move(std::atoi(a) - 1, std::atoi(b) - 1) ? "moved" : "usage: wifi-mv <from> <to>");
     } else if (is("forget-wifi")) {
-        garnet::wifi::forget();
+        garnet::wifi::forget_all();
     } else if (is("hub")) {
         const char* ip = token(p);
         const char* port = token(p);
@@ -137,7 +152,8 @@ void command(char* line) {
         garnet::bsp::screenshot(shotRow, nullptr);
         std::printf("@S end\n");
     } else if (is("help")) {
-        std::printf("commands: status, catalog, wifi <ssid> [pass], forget-wifi, hub <ip> [port], forget-hub,\n"
+        std::printf("commands: status, catalog, wifi <ssid> [pass], wifi-list, wifi-rm <n>, wifi-mv <from> <to>,\n"
+                    "  forget-wifi, hub <ip> [port], forget-hub,\n"
                     "  link wifi|tether, halt, pause, release, knock, press <input>, map [import <json>|clear], shot,\n"
                     "  tab <n>, mapstart, mappick <action>, catdump\n");
     } else {
@@ -165,7 +181,10 @@ void uiTask(void*) {
             garnet::ui::tick(garnet::bsp::buttons());
         }
         app.session->tick(uint32_t(now));
-        while (garnet::console::next(app.cmd)) command(app.cmd);
+        while (garnet::console::next(app.cmd)) {
+            command(app.cmd);
+            valence::net::wipeBytes(app.cmd, sizeof app.cmd);  // a wifi line holds a passphrase
+        }
         lv_timer_handler();
         vTaskDelay(pdMS_TO_TICKS(5));
     }

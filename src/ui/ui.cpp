@@ -60,6 +60,14 @@ const Metrics* mx = &kLarge;
 
 enum class MapStep : uint8_t { Idle, WaitPress, Pick };
 
+// One saved-network row on the Setup tab; rows past wifi::count() are hidden.
+struct NetRow {
+    lv_obj_t* row = nullptr;
+    lv_obj_t* name = nullptr;
+    lv_obj_t* up = nullptr;
+    lv_obj_t* down = nullptr;
+};
+
 struct Ui {
     Session* session = nullptr;
     Mapping* mapping = nullptr;
@@ -85,6 +93,8 @@ struct Ui {
     uint32_t modelGen = 0;
 
     lv_obj_t* wifiLbl = nullptr;
+    NetRow nets[wifi::kMaxNetworks];
+    lv_obj_t* cancelBtn = nullptr;
     lv_obj_t* linkBtnLbl = nullptr;
     lv_obj_t* knockBtn = nullptr;
     lv_obj_t* askBtn = nullptr;
@@ -377,7 +387,12 @@ void refreshControls() {
 
 // ---- setup tab ------------------------------------------------------------------
 
-void forgetWifi(lv_event_t*) { wifi::forget(); }
+int netIndex(lv_event_t* e) { return int(reinterpret_cast<intptr_t>(lv_event_get_user_data(e))); }
+void netUp(lv_event_t* e) { wifi::move(netIndex(e), netIndex(e) - 1); }
+void netDown(lv_event_t* e) { wifi::move(netIndex(e), netIndex(e) + 1); }
+void netRemove(lv_event_t* e) { wifi::remove(netIndex(e)); }
+void addNetwork(lv_event_t*) { wifi::open_portal(); }
+void cancelPortal(lv_event_t*) { wifi::cancel_portal(); }
 void forgetHub(lv_event_t*) { u.session->forgetHub(); }
 void knock(lv_event_t*) { u.session->knock(); }
 void askConfigure(lv_event_t*) { u.session->askConfigure(); }
@@ -385,11 +400,43 @@ void toggleLink(lv_event_t*) {
     u.session->setMode(u.session->mode() == LinkMode::Wifi ? LinkMode::Tether : LinkMode::Wifi);
 }
 
+lv_obj_t* flatBox(lv_obj_t* parent, lv_flex_flow_t flow) {
+    lv_obj_t* o = lv_obj_create(parent);
+    lv_obj_set_size(o, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_flex_flow(o, flow);
+    lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_pad_all(o, 0, 0);
+    lv_obj_set_style_pad_gap(o, mx->pad, 0);
+    lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(o, 0, 0);
+    return o;
+}
+
+lv_obj_t* netButton(lv_obj_t* parent, const char* symbol, lv_event_cb_t cb, int i) {
+    lv_obj_t* b = button(parent, symbol, nullptr);
+    lv_obj_set_size(b, mx->btnH * 5 / 4, mx->btnH);
+    lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+    return b;
+}
+
 void buildSetup(lv_obj_t* tab) {
     lv_obj_set_flex_flow(tab, LV_FLEX_FLOW_COLUMN);
     u.wifiLbl = label(tab, "", mx->small);
     lv_obj_set_width(u.wifiLbl, LV_PCT(100));
     lv_label_set_long_mode(u.wifiLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_t* list = flatBox(tab, LV_FLEX_FLOW_COLUMN);
+    for (int i = 0; i < wifi::kMaxNetworks; ++i) {
+        NetRow& r = u.nets[i];
+        r.row = flatBox(list, LV_FLEX_FLOW_ROW);
+        lv_obj_set_flex_align(r.row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+        r.name = label(r.row, "");
+        lv_obj_set_flex_grow(r.name, 1);
+        lv_label_set_long_mode(r.name, LV_LABEL_LONG_DOT);
+        r.up = netButton(r.row, LV_SYMBOL_UP, netUp, i);
+        r.down = netButton(r.row, LV_SYMBOL_DOWN, netDown, i);
+        netButton(r.row, LV_SYMBOL_CLOSE, netRemove, i);
+        lv_obj_add_flag(r.row, LV_OBJ_FLAG_HIDDEN);
+    }
     lv_obj_t* row = lv_obj_create(tab);
     lv_obj_set_size(row, LV_PCT(100), LV_SIZE_CONTENT);
     lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW_WRAP);
@@ -400,25 +447,51 @@ void buildSetup(lv_obj_t* tab) {
     u.knockBtn = button(row, "Request control", knock);
     u.askBtn = button(row, "Ask configure", askConfigure);
     button(row, "Forget hub", forgetHub);
-    button(row, "Forget WiFi", forgetWifi);
+    button(row, "Add network", addNetwork);
+    u.cancelBtn = button(row, "Cancel", cancelPortal);
+    lv_obj_add_flag(u.cancelBtn, LV_OBJ_FLAG_HIDDEN);
     button(row, "Link: WiFi", toggleLink, &u.linkBtnLbl);
 }
 
 void refreshSetup() {
     Session& s = *u.session;
-    switch (wifi::state()) {
+    const int n = wifi::count();
+    const int live = wifi::live();
+    const wifi::State ws = wifi::state();
+    char nm[33] = "";
+    switch (ws) {
         case wifi::State::Portal:
             lv_label_set_text_fmt(u.wifiLbl, "WiFi setup: join \"%s\", password %s,\nthen open http://192.168.4.1",
                                   wifi::portal_ssid(), wifi::portal_pass());
             break;
         case wifi::State::Connected: {
             const uint32_t ip = wifi::ipv4();
-            lv_label_set_text_fmt(u.wifiLbl, "WiFi: %s, %u.%u.%u.%u", wifi::sta_ssid(), unsigned(ip & 0xFF),
+            wifi::ssid(live, nm, sizeof nm);
+            lv_label_set_text_fmt(u.wifiLbl, "WiFi: %s, %u.%u.%u.%u", nm, unsigned(ip & 0xFF),
                                   unsigned((ip >> 8) & 0xFF), unsigned((ip >> 16) & 0xFF), unsigned(ip >> 24));
             break;
         }
         default:
-            lv_label_set_text_fmt(u.wifiLbl, "WiFi: joining \"%s\"", wifi::sta_ssid());
+            lv_label_set_text_fmt(u.wifiLbl, "WiFi: joining (%d saved)", n);
+    }
+    for (int i = 0; i < wifi::kMaxNetworks; ++i) {
+        const NetRow& r = u.nets[i];
+        const bool shown = i < n && wifi::ssid(i, nm, sizeof nm);
+        if (lv_obj_has_flag(r.row, LV_OBJ_FLAG_HIDDEN) == shown) {
+            if (shown) lv_obj_remove_flag(r.row, LV_OBJ_FLAG_HIDDEN);
+            else lv_obj_add_flag(r.row, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (!shown) continue;
+        char text[48];
+        std::snprintf(text, sizeof text, "%s%s", i == live ? LV_SYMBOL_OK " " : "", nm);
+        if (std::strcmp(lv_label_get_text(r.name), text) != 0) lv_label_set_text(r.name, text);
+        setEnabled(r.up, i > 0);
+        setEnabled(r.down, i + 1 < n);
+    }
+    const bool cancelShown = ws == wifi::State::Portal && n > 0;
+    if (lv_obj_has_flag(u.cancelBtn, LV_OBJ_FLAG_HIDDEN) == cancelShown) {
+        if (cancelShown) lv_obj_remove_flag(u.cancelBtn, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_add_flag(u.cancelBtn, LV_OBJ_FLAG_HIDDEN);
     }
     lv_label_set_text(u.linkBtnLbl, s.mode() == LinkMode::Wifi ? "Link: WiFi" : "Link: tether");
     setEnabled(u.knockBtn, s.live() && s.roles() == valence::AccessLevel::watch);
