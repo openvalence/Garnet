@@ -61,10 +61,12 @@ crosses between tasks.
 - The catalog ceiling is `catalog_max_bytes` (1 MiB) and 256 entries (SPEC §8.1,
   RFC-121); client-watch must accept both. Every large buffer lives in PSRAM
   and none on a task stack.
-- The `Client` carries its catalog reassembly buffer inline: 5,462 chunks,
-  1,048,704 B (`VALENCE_CLIENT_CATALOG_CHUNKS` in `src/CMakeLists.txt`).
-  Garnet allocates the Client from PSRAM with placement new, and
-  `session.cpp` static-asserts the budget against `catalog_max_bytes`.
+- The `Client`'s catalog reassembly budget is the library default, 5,462
+  chunks (1,048,704 B, `catalog_max_bytes`); `session.cpp` static-asserts it.
+  The block is allocated per transfer through the Client's `IAllocator`
+  (default `malloc`, which `CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=512` sends to
+  PSRAM) and freed after the catalog lands. Garnet allocates the Client
+  itself from PSRAM with placement new.
 - The `Model` holds the decoded catalog (`BasicCatalog<256, 8192, 8192, 12288,
   8, 1024>`, about 1.9 MB) and the one raw copy Garnet keeps of the encoded
   bytes, allocated at the catalog's exact size on each load. The decoded
@@ -87,7 +89,7 @@ crosses between tasks.
 | Gap | Library addition |
 |---|---|
 | L1: catalog dropped after the hash check | `ClientDelegate::onCatalog(bytes, verified)`, fired before LIVE |
-| L2: 12 KB reassembly budget | `VALENCE_CLIENT_CATALOG_CHUNKS`, default 192 chunks (36 KB); Garnet sets 5,462 (RFC-121) |
+| L2: 12 KB reassembly budget | `VALENCE_CLIENT_CATALOG_CHUNKS`, default 5,462 chunks (`catalog_max_bytes`, RFC-121), the block out of line |
 | L3: no mid-session SUBSCRIBE | `Client::subscribe()` |
 | L4: no safety helpers | `halt()`, `pause()`, `resume()`, `release()`. `pause` and `halt` bypass a full pending table. |
 | L5: no sessionless stop | `EstopDatagramSender` (RFC-053) |
