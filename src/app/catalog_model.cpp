@@ -3,7 +3,9 @@
 #include <cmath>
 #include <cstring>
 
+#include "esp_heap_caps.h"
 #include "esp_log.h"
+#include "valence/generated/registry_constants.hpp"
 #include "valence/wire/catalog_codec.hpp"
 #include "valence/wire/packed/layout_codec.hpp"
 
@@ -37,21 +39,40 @@ float Setting::step() const {
     return 1.0f;
 }
 
+void Model::release() {
+    heap_caps_free(_bytes);
+    _bytes = nullptr;
+    _len = 0;
+}
+
 bool Model::load(std::span<const std::byte> encoded) {
     _loaded = false;
+    _refusal = nullptr;
+    ++_gen;
     _settingCount = 0;
     _watchedCount = 0;
     _position = {};
     clearValues();
-    if (encoded.size() > _bytes.size()) {
-        ESP_LOGE(kTag, "catalog %u B over the %u B budget", unsigned(encoded.size()), unsigned(_bytes.size()));
+    release();
+    if (encoded.size() > valence::limits::catalog_max_bytes) {
+        ESP_LOGE(kTag, "catalog %u B over the %u B ceiling", unsigned(encoded.size()),
+                 unsigned(valence::limits::catalog_max_bytes));
+        _refusal = "Catalog over 1 MiB.";
         return false;
     }
-    std::memcpy(_bytes.data(), encoded.data(), encoded.size());
+    _bytes = static_cast<std::byte*>(heap_caps_malloc(encoded.size(), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (!_bytes) {
+        ESP_LOGE(kTag, "no PSRAM for the %u B catalog", unsigned(encoded.size()));
+        _refusal = "No memory for the catalog.";
+        return false;
+    }
+    std::memcpy(_bytes, encoded.data(), encoded.size());
     _len = encoded.size();
     _cat.clear();
-    const auto r = valence::decodeCatalog(std::span<const std::byte>(_bytes.data(), _len), _cat);
+    const auto r = valence::decodeCatalog(std::span<const std::byte>(_bytes, _len), _cat);
     if (!r || !_cat.ok()) {
+        _refusal = (!r && r.error() != valence::DecodeError::CapacityExceeded) ? "Catalog unreadable."
+                                                                              : "Catalog too big for this remote.";
         ESP_LOGE(kTag, "catalog decode failed (%u B, error %d): entries %u, layout %u, schema %u, labels %u, stores %u, safe %u",
                  unsigned(_len), r ? -1 : int(r.error()), unsigned(_cat.count), unsigned(_cat.layoutUsed),
                  unsigned(_cat.schemaUsed), unsigned(_cat.labelUsed), unsigned(_cat.storeUsed), unsigned(_cat.safeUsed));
@@ -59,7 +80,6 @@ bool Model::load(std::span<const std::byte> encoded) {
     }
     index();
     _loaded = true;
-    ++_gen;
     ESP_LOGI(kTag, "catalog %u B: %u entries, %u layout, %u schema; %u settings, position %s, %u watched",
              unsigned(_len), unsigned(_cat.count), unsigned(_cat.layoutUsed), unsigned(_cat.schemaUsed),
              unsigned(_settingCount), _position.lf ? "yes" : "no", unsigned(_watchedCount));

@@ -2,7 +2,7 @@
 
 Embedded Valence client firmware for handheld remotes.
 
-- Link: WiFi WebSocket first; ESP-NOW and BLE later.
+- Link: WiFi WebSocket first; ESP-NOW later. A remote opens no BLE session.
 - UI: built live from the hub's catalog.
 - Input: user button-mapping system over a per-board input manifest.
 
