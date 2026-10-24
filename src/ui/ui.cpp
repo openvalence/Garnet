@@ -305,7 +305,7 @@ void rebuildControls() {
     Model& m = u.session->model();
     u.modelGen = m.generation();
     if (!m.loaded()) {
-        label(u.controls, "Waiting for the hub's catalog.", mx->font, kDim);
+        label(u.controls, m.refusal() ? m.refusal() : "Waiting for the hub's catalog.", mx->font, kDim);
         return;
     }
     u.rows.reserve(m.settings().size());

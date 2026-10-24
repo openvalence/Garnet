@@ -12,7 +12,7 @@ design rulings.
 
 | Topic | Ruling |
 |---|---|
-| Transport | WiFi WebSocket first. ESP-NOW follows the Nucleus C6 work (SPEC §13.3 plus a candidate RFC). BLE after that. |
+| Transport | WiFi WebSocket first. ESP-NOW follows the Nucleus C6 work (SPEC §13.3 plus a candidate RFC). A remote opens no BLE session (RFC-121; BLE is a hub setup transport). |
 | Stop | A dedicated, latched stop. It is labeled "Halt", or "E-Stop" only when the hub declares `estop_cuts_power` (§11.2 H1, RENDERING.md law 15). |
 | Pairing | At the `control` tier, with `watch` as the fallback. |
 | UI | Built live from the hub's catalog. |
@@ -58,12 +58,23 @@ crosses between tasks.
 
 ### 2.2 Memory
 
-- The `Client` carries its catalog reassembly buffer inline (48 KB in Garnet, `VALENCE_CLIENT_CATALOG_CHUNKS=256`). Garnet
-  allocates it from PSRAM with placement new, never on a task stack.
-- The `Model` holds the decoded catalog (`BasicCatalog<320, 768, 512, 1024, 8, 64>`,
-  sized for the measured Nucleus catalog with headroom) and a 48 KB copy of
-  the encoded bytes. The decoded strings point into that copy. It also lives
-  in PSRAM.
+- The catalog ceiling is `catalog_max_bytes` (1 MiB) and 256 entries (SPEC §8.1,
+  RFC-121); client-watch must accept both. Every large buffer lives in PSRAM
+  and none on a task stack.
+- The `Client` carries its catalog reassembly buffer inline: 5,462 chunks,
+  1,048,704 B (`VALENCE_CLIENT_CATALOG_CHUNKS` in `src/CMakeLists.txt`).
+  Garnet allocates the Client from PSRAM with placement new, and
+  `session.cpp` static-asserts the budget against `catalog_max_bytes`.
+- The `Model` holds the decoded catalog (`BasicCatalog<256, 8192, 8192, 12288,
+  8, 1024>`, about 1.9 MB) and the one raw copy Garnet keeps of the encoded
+  bytes, allocated at the catalog's exact size on each load. The decoded
+  strings point into that copy. It is a copy, not a view of the Client's
+  buffer, because a refetch overwrites that buffer while the old catalog is
+  still in use. The Model lives in PSRAM.
+- The count pools follow the 256-entry, 64-fields-per-entry bound (16,384
+  layout plus schema fields), split evenly. A catalog needing more than 8,192
+  fields of one class is refused: the screen says "Catalog too big for this
+  remote.", and Halt and the safety channel do not depend on the Model.
 - The panel's frame buffer is in PSRAM. LVGL draws into a 20-line partial
   buffer in internal RAM. `CONFIG_SPIRAM_XIP_FROM_PSRAM` keeps the cache up
   during flash writes, so the scan-out does not drift.
@@ -76,7 +87,7 @@ crosses between tasks.
 | Gap | Library addition |
 |---|---|
 | L1: catalog dropped after the hash check | `ClientDelegate::onCatalog(bytes, verified)`, fired before LIVE |
-| L2: 12 KB reassembly budget | `VALENCE_CLIENT_CATALOG_CHUNKS`, default 192 chunks (36 KB); the Nucleus 0.1.44 catalog measured 28,611 B |
+| L2: 12 KB reassembly budget | `VALENCE_CLIENT_CATALOG_CHUNKS`, default 192 chunks (36 KB); Garnet sets 5,462 (RFC-121) |
 | L3: no mid-session SUBSCRIBE | `Client::subscribe()` |
 | L4: no safety helpers | `halt()`, `pause()`, `resume()`, `release()`. `pause` and `halt` bypass a full pending table. |
 | L5: no sessionless stop | `EstopDatagramSender` (RFC-053) |
@@ -224,7 +235,6 @@ The strip's states:
 | 1b | RFC-053 ESTOP datagram on the same port, broadcast plus the hub's address | built |
 | bench | Tether: frames as `@V <base64>` lines on the USB console, relayed by `tools/tether_bridge.py` | built |
 | 2 | ESP-NOW client binding (§13.3) | waits on Nucleus C6 work and the binding RFC (channel discovery, control-tier encryption, peer-table split) |
-| 3 | BLE GATT (§13.4) | after ESP-NOW |
 
 Discovery is the §13.8 UDP probe, the same front door Phosphor uses. Garnet
 does not use mDNS: Phosphor runs none (RFC-072 ruling, 2026-10-01), Nucleus

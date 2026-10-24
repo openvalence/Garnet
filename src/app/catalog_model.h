@@ -4,11 +4,15 @@
 // with a setting key, written through its entry's setting channel).
 // Constraints:
 // - UI task only.
-// - Lives in PSRAM (Session allocates it): the decoded catalog is ~200 KB.
+// - Lives in PSRAM (Session allocates it): the count pools below are ~1.9 MB.
 // - The string views in the catalog alias _bytes; load() replaces both at once.
+// - _bytes is the ONLY raw copy of the catalog Garnet keeps (sized per load,
+//   PSRAM). It must not alias the Client's reassembly buffer: a refetch
+//   overwrites that buffer while this catalog is still the one in use.
 #pragma once
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -19,9 +23,14 @@
 
 namespace garnet {
 
-// Sized for the Nucleus catalog (measured 234 entries, 438 layout fields,
-// 340 schema fields, 576 labels), with headroom.
-using Catalog = valence::BasicCatalog<320, 768, 512, 1024, 8, 64>;
+// Count pools for a catalog at the SPEC 8.1 ceiling: catalog_max_entries (256)
+// entries and 64 fields per entry (CatalogEntry::kMaxFields) bound layout plus
+// schema fields at 16,384; each pool takes half of that, so a catalog that
+// needs more than 8,192 fields of ONE class is refused (Model::refusal()).
+// Labels follow the measured Nucleus ratio (576 labels per 778 fields) with
+// headroom. A pool is a fixed array: raising one costs PSRAM at boot, whether
+// or not a hub ever fills it.
+using Catalog = valence::BasicCatalog<256, 8192, 8192, 12288, 8, 1024>;
 
 struct Setting {
     const valence::LayoutField* lf = nullptr;  // the STATE field: current value
@@ -50,12 +59,18 @@ struct Readout {
 class Model {
 public:
     static constexpr size_t kMaxSettings = 96;
-    static constexpr size_t kMaxBytes = 48 * 1024;  // = the Client's reassembly budget
     static constexpr size_t kMaxWatched = 16;
+
+    Model() = default;
+    Model(const Model&) = delete;
+    Model& operator=(const Model&) = delete;
+    ~Model() { release(); }
 
     bool load(std::span<const std::byte> encoded);
     bool loaded() const { return _loaded; }
-    std::span<const std::byte> bytes() const { return {_bytes.data(), _len}; }
+    // Why the last load() refused, in words for the screen; nullptr if it did not.
+    const char* refusal() const { return _refusal; }
+    std::span<const std::byte> bytes() const { return {_bytes, _len}; }
     const Catalog& catalog() const { return _cat; }
     uint32_t generation() const { return _gen; }  // bumps on every load()
 
@@ -87,8 +102,11 @@ private:
     const Value* find(uint16_t ch) const;
     void index();
 
-    std::array<std::byte, kMaxBytes> _bytes{};
+    void release();
+
+    std::byte* _bytes = nullptr;
     size_t _len = 0;
+    const char* _refusal = nullptr;
     Catalog _cat{};
     bool _loaded = false;
     uint32_t _gen = 0;

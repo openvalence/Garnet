@@ -16,6 +16,9 @@
 #include "freertos/task.h"
 #include "nvs.h"
 
+static_assert(valence::Client::kCatalogBudgetBytes >= valence::limits::catalog_max_bytes,
+              "client-watch must reassemble a catalog up to catalog_max_bytes (RFC-121)");
+
 namespace garnet {
 namespace {
 constexpr const char* kTag = "session";
@@ -98,6 +101,8 @@ void Session::begin() {
     _model = psramNew<Model>();
     _datagram = valence::EstopDatagramSender(&Session::sendDatagram, this, uint16_t(esp_random()));
     buildClient();
+    ESP_LOGI(kTag, "model %u B + client %u B in PSRAM, %u B PSRAM free", unsigned(sizeof(Model)),
+             unsigned(sizeof(valence::Client)), unsigned(heap_caps_get_free_size(MALLOC_CAP_SPIRAM)));
     ESP_LOGI(kTag, "%s, %s, link %s", _name, _id.hasToken ? "paired" : "unpaired (watch)",
              _mode == LinkMode::Tether ? "tether" : "wifi");
 }

@@ -24,6 +24,9 @@ idf_component_register(SRCS "main.cpp"
                                      esp_http_server lwip nvs_flash json mbedtls vfs)
 
 target_compile_options(${COMPONENT_LIB} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:-std=gnu++2b> -Wno-missing-field-initializers)
-# The Client's catalog reassembly budget: 256 chunks = 48 KB (the Nucleus
-# 0.1.44 catalog measured 28,611 B). Model::kMaxBytes must hold the same.
-target_compile_definitions(${COMPONENT_LIB} PRIVATE GARNET_BOARD_${GARNET_BOARD}=1 VALENCE_CLIENT_CATALOG_CHUNKS=256)
+# The Client's catalog reassembly budget in 192 B BLOB_CHUNK payloads:
+# ceil(catalog_max_bytes 1,048,576 / 192) = 5,462 chunks (RFC-121, client-watch).
+# The Client holds it inline and Session allocates the Client from PSRAM;
+# session.cpp static_asserts the budget against catalog_max_bytes. Remove this
+# define at the pin bump that moves the buffer out of line.
+target_compile_definitions(${COMPONENT_LIB} PRIVATE GARNET_BOARD_${GARNET_BOARD}=1 VALENCE_CLIENT_CATALOG_CHUNKS=5462)
