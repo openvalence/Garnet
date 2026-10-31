@@ -23,12 +23,13 @@
     "version": 1,
     "bindings": {
       "knob_l": "speed+",
-      "knob_cl": "depth+",
-      "knob_cr": "stroke+",
+      "knob_cl": "win.a+",
+      "knob_cr": "win.b+",
       "knob_r": "sens+",
       "mx": "run",
-      "push_l": "halt",
-      "push_r": "pattern+"
+      "push_l": "winmode",
+      "push_r": "pattern+",
+      "power": "halt"
     }
   }
 }

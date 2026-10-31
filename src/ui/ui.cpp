@@ -21,7 +21,7 @@ namespace garnet::ui {
 namespace {
 
 constexpr const char* kTag = "ui";
-constexpr uint32_t kReleaseHoldMs = 3000;  // RFC-085: release is a held press
+constexpr uint32_t kReleaseHoldMs = input::HaltHold::kReleaseHoldMs;
 constexpr uint32_t kRefreshMs = 100;
 
 constexpr uint32_t kRed = 0xC62828, kRedDark = 0x5A1010, kAmber = 0xE0A030,
@@ -38,7 +38,8 @@ struct Input {
 };
 
 // One Home row: a pattern knob found by role (RENDERING-style binding by
-// role, never by name), its bar and its value.
+// role, never by name), its bar and its value. The roles "win.a" and
+// "win.b" are the window knobs: what they show follows the window mode.
 struct HomeRow {
     const char* role;
     const char* name;
@@ -98,20 +99,17 @@ struct Ui {
     bool releaseSent = false;
 
     lv_obj_t* tabs = nullptr;
-    HomeRow home[4] = {{"pattern.speed", "Speed"}, {"pattern.depth", "Depth"},
-                       {"pattern.stroke", "Stroke"}, {"pattern.sensation", "Sensation"}};
+    HomeRow home[4] = {{"pattern.speed", "Speed"}, {"win.a", "Rear"}, {"win.b", "Front"},
+                       {"pattern.sensation", "Sensation"}};
     lv_obj_t* patternLbl = nullptr;
     lv_obj_t* homeStatus = nullptr;
     lv_obj_t* legend = nullptr;
     const char* focusRole = nullptr;  // the role a knob turned last: highlighted
     char refusal[80] = "";            // why the last knob or key write did not go out
     uint32_t refusalMs = 0;
-    // A physical input mapped to halt: the press latches; a press that began
-    // after the latch and is held kReleaseHoldMs releases (as the screen Halt).
-    int physHalt = -1;
-    uint32_t physHaltMs = 0;
-    bool physArmed = false;
-    bool physSent = false;
+    // The physical input mapped to halt that is down now, -1 for none.
+    int physIndex = -1;
+    input::HaltHold physHalt;
     lv_obj_t* posLbl = nullptr;
     lv_obj_t* posBar = nullptr;
     lv_obj_t* safetyLbl = nullptr;
@@ -236,9 +234,9 @@ void refreshStrip() {
         std::snprintf(buf, sizeof(buf), "%s NOT CONFIRMED", stopName);
         lv_obj_set_style_bg_color(u.haltBtn, lv_color_hex(kAmber), 0);
     } else if (s.estopLatched()) {
-        const bool phys = u.physHalt >= 0 && u.physArmed;
+        const bool phys = u.physIndex >= 0 && u.physHalt.releasing();
         const bool armed = u.releaseArmed || phys;
-        const uint32_t held = u.releaseArmed ? nowMs() - u.haltPressMs : (phys ? nowMs() - u.physHaltMs : 0);
+        const uint32_t held = u.releaseArmed ? nowMs() - u.haltPressMs : (phys ? u.physHalt.heldMs(nowMs()) : 0);
         if (armed && held < kReleaseHoldMs) {
             std::snprintf(buf, sizeof(buf), "Releasing... %u", unsigned((kReleaseHoldMs - held + 999) / 1000));
         } else {
@@ -314,19 +312,58 @@ void buildHome(lv_obj_t* tab) {
     lv_obj_set_width(u.homeStatus, w);
     lv_label_set_long_mode(u.homeStatus, LV_LABEL_LONG_DOT);
     u.legend = label(tab, "", mx->small, kAmber);
-    lv_obj_set_width(u.legend, w);
+    lv_obj_set_size(u.legend, w, 2 * lv_font_get_line_height(mx->small));  // fixed: a mode change never shifts the page
     lv_label_set_long_mode(u.legend, LV_LABEL_LONG_DOT);
+}
+
+bool isWindowRow(const char* role) { return std::strncmp(role, "win.", 4) == 0; }
+
+const char* windowRowName(bool a, window::Mode mode) {
+    if (mode == window::Mode::RearFront) return a ? "Rear" : "Front";
+    return a ? "Size" : "Position";
+}
+
+// A window row: the mode's names in place, the value in mm, the bar over the rail.
+void refreshWindowRow(HomeRow& r, const Setting* st) {
+    Session& s = *u.session;
+    Model& m = s.model();
+    const bool a = r.role[4] == 'a';
+    const char* name = windowRowName(a, s.windowMode());
+    if (std::strcmp(lv_label_get_text(r.nameLbl), name) != 0) lv_label_set_text(r.nameLbl, name);
+    const auto w = st ? s.window() : std::nullopt;
+    lv_obj_set_style_text_color(r.value, lv_color_hex(st && !s.readOnlyReason(*st) ? kText : kDim), 0);
+    if (!w) {
+        lv_label_set_text(r.value, st ? "--" : "n/a");
+        lv_bar_set_value(r.bar, 0, LV_ANIM_OFF);
+        return;
+    }
+    const window::Win v = window::shown(*w, s.windowMode());
+    const float x = a ? v.min : v.max;
+    const bool whole = std::fabs(x - std::round(x)) < 0.05f;
+    const auto unit = unitText(st->lf->unit);
+    lv_label_set_text_fmt(r.value, "%.*f%s%.*s", whole ? 0 : 1, double(x), unit.empty() ? "" : " ", int(unit.size()),
+                          unit.data());
+    float rail = st->max();
+    if (const Setting* g = m.byRole("geometry.max_travel")) rail = m.value(*g).value_or(rail);
+    lv_bar_set_mode(r.bar, LV_BAR_MODE_NORMAL);
+    lv_bar_set_range(r.bar, 0, rail >= 1.0f ? int32_t(std::lround(rail)) : 1);
+    lv_bar_set_value(r.bar, int32_t(std::lround(x)), LV_ANIM_OFF);
 }
 
 void refreshHome() {
     Session& s = *u.session;
     Model& m = s.model();
     for (HomeRow& r : u.home) {
-        const Setting* st = m.loaded() ? m.byRole(r.role) : nullptr;
+        const bool win = isWindowRow(r.role);
+        const Setting* st = !m.loaded() ? nullptr : (win ? s.windowSetting() : m.byRole(r.role));
         const bool focus = u.focusRole && std::strcmp(u.focusRole, r.role) == 0;
         lv_obj_set_style_bg_color(r.box, lv_color_hex(focus ? kFocus : kPanel), 0);
         lv_obj_set_style_border_width(r.box, focus ? 1 : 0, 0);
         lv_obj_set_style_border_color(r.box, lv_color_hex(kAmber), 0);
+        if (win) {
+            refreshWindowRow(r, st);
+            continue;
+        }
         const auto v = st ? m.value(*st) : std::nullopt;
         const bool writable = st && !s.readOnlyReason(*st);
         lv_obj_set_style_text_color(r.value, lv_color_hex(writable ? kText : kDim), 0);
@@ -383,6 +420,9 @@ void refreshLegend() {
         std::string name = act;
         for (const auto& a : kFixedActions) {
             if (name == a.id) name = a.label;
+        }
+        if (std::strcmp(act, "winmode") == 0) {
+            name = u.session->windowMode() == window::Mode::RearFront ? "Mode (Rear / Front)" : "Mode (Size / Position)";
         }
         if (!txt.empty()) txt += "  ";
         txt += in.label + ": " + name;
@@ -845,11 +885,8 @@ void onPress(size_t i) {
     const std::string act = u.mapping->action(u.inputs[i].id);
     ESP_LOGI(kTag, "input %s pressed (action %s)", u.inputs[i].id.c_str(), act.c_str());
     if (act == "halt") {  // a mapped Halt works during the flow too
-        u.physHalt = int(i);
-        u.physHaltMs = nowMs();
-        u.physArmed = u.session->estopLatched();  // a press that began before the latch never releases
-        u.physSent = false;
-        if (!u.physArmed) u.session->halt();
+        u.physIndex = int(i);
+        if (u.physHalt.press(u.session->estopLatched(), nowMs())) u.session->halt();
     }
     if (u.step == MapStep::WaitPress) {
         if (i == u.mapIndex) {
@@ -877,7 +914,7 @@ void onPress(size_t i) {
 const char* roleOf(const std::string& act) {
     constexpr const char* kMap[][2] = {{"speed", "pattern.speed"}, {"depth", "pattern.depth"},
                                        {"stroke", "pattern.stroke"}, {"sens", "pattern.sensation"},
-                                       {"pattern", "pattern.select"}};
+                                       {"pattern", "pattern.select"}, {"win.a", "win.a"}, {"win.b", "win.b"}};
     for (const auto& e : kMap) {
         if (act.size() == std::strlen(e[0]) + 1 && act.compare(0, act.size() - 1, e[0]) == 0) return e[1];
     }
@@ -895,11 +932,12 @@ void onTurn(size_t i, int steps) {
     }
     const char* role = roleOf(act);
     if (role) u.focusRole = role;
-    const Setting* st = role ? u.session->model().byRole(role) : nullptr;
+    const Setting* st =
+        !role ? nullptr : (isWindowRow(role) ? u.session->windowSetting() : u.session->model().byRole(role));
     if (const char* why = st ? u.session->readOnlyReason(*st) : nullptr) {
         const char* name = role;
         for (const HomeRow& r : u.home) {
-            if (std::strcmp(r.role, role) == 0) name = r.name;
+            if (std::strcmp(r.role, role) == 0) name = lv_label_get_text(r.nameLbl);
         }
         std::snprintf(u.refusal, sizeof u.refusal, "%s: read-only, %s", name, why);
         u.refusalMs = nowMs();
@@ -957,13 +995,10 @@ void tick(uint32_t buttons) {
         in.knob.turn(d, t);
         onTurn(i, in.knob.take(t));
     }
-    if (u.physHalt >= 0) {
-        if (!(buttons & (1u << u.inputs[size_t(u.physHalt)].bit))) {
-            u.physHalt = -1;
-        } else if (u.physArmed && !u.physSent && t - u.physHaltMs >= kReleaseHoldMs) {
-            u.physSent = true;
-            u.session->releaseHalt();
-        }
+    if (u.physIndex >= 0) {
+        const bool level = buttons & (1u << u.inputs[size_t(u.physIndex)].bit);
+        if (u.physHalt.hold(level, t)) u.session->releaseHalt();
+        if (!level) u.physIndex = -1;
     }
     if (t - u.lastRefreshMs >= kRefreshMs) {
         u.lastRefreshMs = t;

@@ -1,5 +1,6 @@
 // Board-independent input logic: button debounce, encoder detents, knob
-// acceleration and send pacing, and the mirror of a directional action.
+// acceleration and send pacing, the hold rule of a key mapped to halt, the
+// power key's edges as a level, and the mirror of a directional action.
 // Header-only with no ESP-IDF include, so test/native proves it on the host.
 // Constraints:
 // - No allocation and no statics: every instance belongs to one input.
@@ -75,6 +76,68 @@ struct Knob {
         lastSendMs = nowMs;
         sentOnce = true;
         return p;
+    }
+};
+
+// A key mapped to halt: the press latches; a press that began after the
+// latch and is held kReleaseHoldMs releases (the on-screen Halt's rule). The
+// press that latched never counts toward the release, so a key held on past
+// the latch (the power key held to power the remote off) leaves the stop on.
+struct HaltHold {
+    static constexpr uint32_t kReleaseHoldMs = 3000;  // RFC-085: release is a held press
+    bool down = false;
+    bool armed = false;
+    bool sent = false;
+    uint32_t pressMs = 0;
+
+    // A press edge with the hub's latch as seen now; true = send halt.
+    bool press(bool latched, uint32_t nowMs) {
+        down = true;
+        armed = latched;
+        sent = false;
+        pressMs = nowMs;
+        return !latched;
+    }
+    // Every scan with the key's level; true = send release, once per press.
+    bool hold(bool level, uint32_t nowMs) {
+        if (!level) {
+            down = armed = false;
+            return false;
+        }
+        if (down && armed && !sent && nowMs - pressMs >= kReleaseHoldMs) {
+            sent = true;
+            return true;
+        }
+        return false;
+    }
+    bool releasing() const { return down && armed && !sent; }
+    uint32_t heldMs(uint32_t nowMs) const { return down ? nowMs - pressMs : 0; }
+};
+
+// The AXP2101 power key as a level. The PMIC reports it only as latched
+// edges (reg 0x49: bit 1 press, bit 0 release), read and cleared once per
+// scan, so a press and a release can land in one read; each of those cases
+// shows for one scan so bsp::buttons() never loses an edge.
+struct PowerKey {
+    bool held = false;
+    uint8_t forced = 0;  // 1: high for one scan, then low; 2: low for one scan, then high
+
+    void edges(bool press, bool release) {
+        if (press && release) {
+            forced = held ? 2 : 1;  // held: the release came first; otherwise the press did
+        } else if (press) {
+            held = true;
+        } else if (release) {
+            held = false;  // also a release with no press seen: the key held through boot
+        }
+    }
+    bool level() {
+        if (forced != 0) {
+            const bool v = forced == 1;
+            forced = 0;
+            return v;
+        }
+        return held;
     }
 };
 

@@ -10,9 +10,14 @@
 // - The panel reset is AW9523 P1_1 and the backlight is the AXP2101 DLDO1
 //   rail; touch has no GPIO of its own (its INT reaches GPIO21 through the
 //   AW9523), so touch is polled.
-// - The power key reaches only the AXP2101. A short press is read from its IRQ
-//   status (0x49, write-1-to-clear); the hold-to-power-off stays in hardware
-//   and is never reconfigured here.
+// - The power key reaches only the AXP2101 (PWRON). Garnet enables its press
+//   and release edge IRQs (0x41 bits 1, 0: a status bit latches only while its
+//   enable is set) and reads the latched edges every scan (0x49, write 1 to
+//   clear). The IRQ pin is shared with the RTC and reaches no GPIO, so it is
+//   polled. Hold-to-power-off stays in hardware; its time (0x27 OFFLEVEL) is
+//   set to 10 s so the 3 s halt release never powers the remote off.
+//   Register facts: AXP2101 datasheet V1.4 (6.5.4, REG 22, 27, 41, 49);
+//   docs/m5-remote.md section 3.1.
 // - No vibration motor on the CoreS3, and the speaker needs the AW88298 amp
 //   over I2S: no click yet.
 // - GARNET_BOARD_m5_remote adds the OSSM M5 Remote PCB (docs/m5-remote.md):
@@ -50,7 +55,9 @@ constexpr int kDrawLines = 24;
 constexpr uint8_t kAxp = 0x34;
 constexpr uint8_t kAw = 0x58;
 constexpr uint8_t kTouch = 0x38;
-constexpr uint32_t kPowerPollMs = 50;
+constexpr uint8_t kPwronPress = 0x02;    // 0x41 / 0x49 bit 1: PWRON negative edge
+constexpr uint8_t kPwronRelease = 0x01;  // bit 0: PWRON positive edge
+constexpr uint8_t kPwronAll = 0x0F;      // both edges, long press, short press
 
 #if GARNET_BOARD_m5_remote
 // Manifest order: buttons after the power key, then the encoders.
@@ -73,8 +80,7 @@ struct Board {
     esp_lcd_panel_io_handle_t io = nullptr;
     lv_display_t* disp = nullptr;
     uint16_t* shadow = nullptr;  // PSRAM copy of the screen, for screenshot()
-    uint32_t lastPowerPollMs = 0;
-    bool powerPulse = false;
+    input::PowerKey power;
 #if GARNET_BOARD_m5_remote
     input::Debounce keys[3];
     pcnt_unit_handle_t enc[kEncoders] = {};
@@ -136,7 +142,9 @@ void initPower() {
     regWrite(g.axp, 0x90, 0xBF);    // LDOs on, DLDO1 (backlight) included
     regWrite(g.axp, 0x95, 33 - 5);  // ALDO4 3.3 V (TF slot)
     regWrite(g.axp, 0x99, 28);      // DLDO1 = backlight level, full
-    regWrite(g.axp, 0x49, 0x0C);    // clear stale power-key events
+    regBits(g.axp, 0x27, 0x0C, 0);  // OFFLEVEL 10 s (M5Unified leaves 4 s, the chip resets to 6 s)
+    regWrite(g.axp, 0x49, kPwronAll);  // stale power-key events
+    regBits(g.axp, 0x41, kPwronPress | kPwronRelease, 0);
 }
 
 void lcdReset() {
@@ -295,20 +303,14 @@ void init() {
 }
 
 namespace {
+// Every scan: one 1-byte read at 400 kHz, plus a clear when an edge latched.
 uint32_t powerKey() {
-    // A power-key short press is an event, not a level: report it held for
-    // one scan so the UI sees one edge.
-    if (g.powerPulse) {
-        g.powerPulse = false;
-        return 0;
-    }
-    if (nowMs() - g.lastPowerPollMs < kPowerPollMs) return 0;
-    g.lastPowerPollMs = nowMs();
     uint8_t irq = 0;
-    if (!regRead(g.axp, 0x49, &irq, 1) || !(irq & 0x0C)) return 0;
-    regWrite(g.axp, 0x49, uint8_t(irq & 0x0C));
-    g.powerPulse = true;
-    return 1;
+    if (regRead(g.axp, 0x49, &irq, 1) && (irq & kPwronAll)) {
+        regWrite(g.axp, 0x49, uint8_t(irq & kPwronAll));  // only what was read: a later edge stays latched
+        g.power.edges(irq & kPwronPress, irq & kPwronRelease);
+    }
+    return g.power.level() ? 1u : 0u;
 }
 }  // namespace
 

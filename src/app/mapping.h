@@ -42,6 +42,11 @@ inline constexpr ActionInfo kFixedActions[] = {
     {"wmin-", "Window start -"},
     {"wmax+", "Window end +"},
     {"wmax-", "Window end -"},
+    {"win.a+", "Window rear or size +"},
+    {"win.a-", "Window rear or size -"},
+    {"win.b+", "Window front or position +"},
+    {"win.b-", "Window front or position -"},
+    {"winmode", "Window mode"},
     {"menu+", "Next tab"},
     {"menu-", "Previous tab"},
 };

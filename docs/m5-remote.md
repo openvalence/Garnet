@@ -93,19 +93,55 @@ Everything goes through the Valence session. The knobs nudge catalog
 settings found by role, within the hub's ranges and steps; nothing is sent
 outside the catalog.
 
+Operator 2026-10-31: "a default setup is fine, estop can stay on the m5
+button out of the way, keep it similar, a way to control the window 2
+knobs, 2 modes, one is rear pos front pos, the other is size and position".
+
 | Original | Garnet (default mapping, `boards/m5_remote/manifest.json`) |
 |---|---|
 | Knob 1 Speed | `knob_l`: `speed+` (role `pattern.speed`), counterclockwise `speed-` |
-| Knob 2 Depth | `knob_cl`: `depth+` (role `pattern.depth`) |
-| Knob 3 Stroke | `knob_cr`: `stroke+` (role `pattern.stroke`). Clockwise is longer; the original ran this knob the other way because its slider drew the stroke from the depth end. |
+| Knob 2 Depth | `knob_cl`: `win.a+`, the window's rear limit or its size (by mode) |
+| Knob 3 Stroke | `knob_cr`: `win.b+`, the window's front limit or its position (by mode) |
 | Knob 4 Sensation | `knob_r`: `sens+` (role `pattern.sensation`) |
-| Fast-spin ramp | kept: up to 8 steps per detent within 75 ms, one write per 50 ms |
+| Fast-spin ramp | kept: up to 8 steps per detent within 75 ms; window writes at most every 100 ms (the `config-set` channel's 10 Hz) |
 | MX Start/Stop | `mx`: `run`, toggles role `pattern.running` from the hub's value |
-| Left push Pullout | `push_l`: `halt`. One press latches the stop (the same path as the on-screen Halt, datagram included). A new press held 3 s after the latch releases it. |
+| Left push Pullout | `push_l`: `winmode`, toggles Rear / Front and Size / Position. Pullout is not carried over. |
 | Right push Pattern | `push_r`: `pattern+`, the next pattern (role `pattern.select`), wrapping |
-| Home screen | the Home tab: Speed, Depth, Stroke, Sensation as bar plus number with unit, the pattern, run state, the key legend. The row a knob turned last is highlighted. |
+| (no stop key) | `power`, the CoreS3's own side key: `halt`. One press latches the stop (the same path as the on-screen Halt, datagram included). A new press held 3 s after the latch releases it. |
+| Home screen | the Home tab: Speed, the window (Rear and Front, or Size and Position, names swapping in place), Sensation as bar plus number with unit; the pattern, run state, the key legend with the current window mode. The row a knob turned last is highlighted. |
 | Menu, Settings, Torque | the Controls and Setup tabs, by touch |
-| Battery percent | not shown yet |
+| Battery percent | not shown yet (gar-4bv.2) |
+
+`depth+` and `stroke+` stay in the picker for a remap. The window math,
+its clamps and the single-frame rule are in `docs/DESIGN.md` 4.2.
+
+### 3.1 Halt on the power key
+
+The power key is wired to the AXP2101's PWRON pin only, and the PMIC's IRQ
+pin is shared with the RTC and reaches no GPIO (M5Unified `Power_Class`
+CoreS3 setup), so Garnet polls the PMIC over I2C on every 10 ms scan.
+
+| Fact | Value | Source |
+|---|---|---|
+| PWRON edge IRQ status | reg 0x49 bit 1 = negative edge (the key pulls PWRON low: press), bit 0 = positive edge (release); bit 2 long press, bit 3 short press, both reported only after the fact; write 1 to clear | AXP2101 datasheet V1.4, REG 49 and 6.5.4.1; Zephyr `mfd_axp2101.c` maps bit 1 to key down and bit 0 to key up |
+| Edge IRQ enable | reg 0x41 bits 1, 0; reset default 0 (bits 7..2 default 1). A status bit is set only while its enable is 1, so Garnet sets both | datasheet 6.12 ("When the events occur and their IRQ enabled bits are set to 1 ..., corresponding IRQ status will be set to 1") and REG 41 |
+| Power-off hold (OFFLEVEL) | reg 0x27 bits 3:2: 4, 6, 8, 10 s; chip reset default 6 s; M5Unified writes 4 s, and the value outlives a reflash (REG 27 resets on POR only; a flash resets the ESP32, not the battery-held PMIC). Garnet sets 10 s. Power-off by the key needs REG 22 bit 1 (EFUSE default; enabled on the CoreS3, whose key powers it off) | datasheet REG 27, REG 22, 6.5.4.3; M5Unified `Power_Class.inl` CoreS3 table `0x27, 0x00` |
+
+The level is rebuilt from the edges (`input::PowerKey`): the press edge sets
+it, the release edge clears it. A press and its release inside one scan
+show as held for one scan, so the halt still fires; a release and a new
+press inside one scan show one scan low, so the new press is a new edge.
+
+Holding the key for 10 s powers the remote off in hardware. That press
+latched the halt and never counts toward the release, so the machine stays
+halted after the remote is gone. The latch lives in the hub (the `safety`
+word's ESTOP bit), not in the remote: any client with `control` releases
+it (Phosphor, or the remote again after power-on, with a new 3 s hold), and
+a release lands in PAUSE, never in motion (registry `safety_intent_ops`).
+
+Halt latency, press to the frame handed to the link: the PMIC latches the
+edge, the next scan reads it (scans every 10 ms, later only while the UI
+task renders), and the same call sends the halt.
 
 A write that cannot go out says why on the Home status line: no session,
 needs `control` (Setup: Request control), needs `configure`, or disabled by

@@ -15,6 +15,7 @@
 #include <string_view>
 
 #include "app/catalog_model.h"
+#include "app/window_logic.h"
 #include "link/link.h"
 #include "valence/client/client.hpp"
 #include "valence/client/estop_datagram.hpp"
@@ -70,6 +71,15 @@ public:
     // Why `s` cannot be written now, in words for the screen; nullptr if it can.
     const char* readOnlyReason(const Setting& s) const;
 
+    // The stroke window from knobs (win.*, wmin*, wmax*, winmode actions;
+    // docs/DESIGN.md 4.2): the mode decides what win.a and win.b move;
+    // window() is what the Home tab shows, the pending target while one is in
+    // flight, else the hub's.
+    window::Mode windowMode() const { return _winMode; }
+    void toggleWindowMode();
+    std::optional<window::Win> window();
+    const Setting* windowSetting() const;  // the rear limit: what gates every window write
+
     // ClientDelegate
     void onStateChange(valence::ClientSessionState s) override;
     void onState(uint16_t ch, uint16_t seq, std::span<const std::byte> payload) override;
@@ -96,6 +106,9 @@ private:
     // doubling delay of at least `atLeastMs` (a NACK's retry_after_ms).
     void scheduleRetry(uint32_t atLeastMs, const char* why);
     float current(const Setting& s);
+    bool windowSettings(const Setting*& rear, const Setting*& front, window::Limits& l) const;
+    bool windowNudge(window::Mode mode, int a, int b);
+    void flushWindow();
 
     LinkMode _mode = LinkMode::Wifi;
     EspClock _clock;
@@ -132,6 +145,9 @@ private:
     uint32_t _busyRetryMs = 0;
     uint32_t _lossSeen = 0;
     uint32_t _lossAtMs = 0;
+
+    window::Mode _winMode = window::Mode::RearFront;
+    window::Editor _win;
 
     // A nudge between a write and its STATE builds on what was asked, not on
     // the stale shown value.

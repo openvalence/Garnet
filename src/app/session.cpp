@@ -278,6 +278,7 @@ void Session::tick(uint32_t nowUs) {
 
     _datagram.update(_nowMs);
     if (_haltPending && estopLatched()) _haltPending = false;
+    flushWindow();
 
     const uint32_t lost = _ws.unsent() + _writesLost;
     if (lost != _lossSeen) {
@@ -386,6 +387,87 @@ const char* Session::readOnlyReason(const Setting& s) const {
 
 bool Session::toggle(const Setting& s) { return write(s, current(s) >= 0.5f ? 0.0f : 1.0f); }
 
+// ---- the window from knobs ----------------------------------------------------
+// The two limits are one config-set frame (window_logic.h); the hub's rail
+// length (role geometry.max_travel) bounds the front when it is known.
+
+const Setting* Session::windowSetting() const { return _model->byRole("window.min"); }
+
+bool Session::windowSettings(const Setting*& rear, const Setting*& front, window::Limits& l) const {
+    rear = _model->byRole("window.min");
+    front = _model->byRole("window.max");
+    if (!rear || !front) {
+        ESP_LOGW(kTag, "window: this catalog has no settings with roles window.min and window.max");
+        return false;
+    }
+    if (rear->intentCh != front->intentCh) {
+        ESP_LOGW(kTag, "window: the limits are written on two channels, so no single frame moves both");
+        return false;
+    }
+    l.lo = rear->min();
+    l.hi = front->max();
+    if (const Setting* rail = _model->byRole("geometry.max_travel")) {
+        if (const auto v = _model->value(*rail); v && *v < l.hi) l.hi = *v;
+    }
+    l.step = rear->step();
+    l.floor = l.step;
+    return true;
+}
+
+std::optional<window::Win> Session::window() {
+    if (_win.dirty || (_win.sentOnce && timeDiff(_nowMs, _win.lastSendMs) < kNudgeHoldMs)) return _win.target;
+    const Setting* rear = _model->byRole("window.min");
+    const Setting* front = _model->byRole("window.max");
+    const auto lo = rear ? _model->value(*rear) : std::nullopt;
+    const auto hi = front ? _model->value(*front) : std::nullopt;
+    if (!lo || !hi) return std::nullopt;
+    return window::Win{*lo, *hi};
+}
+
+void Session::toggleWindowMode() {
+    _winMode = _winMode == window::Mode::RearFront ? window::Mode::SizePosition : window::Mode::RearFront;
+    ESP_LOGI(kTag, "window knobs: %s", _winMode == window::Mode::RearFront ? "rear / front" : "size / position");
+}
+
+bool Session::windowNudge(window::Mode mode, int a, int b) {
+    const Setting* rear = nullptr;
+    const Setting* front = nullptr;
+    window::Limits l;
+    if (!windowSettings(rear, front, l)) return false;
+    if (!live() || !_model->enabled(*rear, roles()) || !_model->enabled(*front, roles())) return false;
+    const auto base = window();
+    if (!base) {
+        ESP_LOGW(kTag, "window: the hub has not reported the window yet");
+        return false;
+    }
+    _win.edit(*base, mode, a, b, l);
+    flushWindow();
+    return true;
+}
+
+void Session::flushWindow() {
+    const Setting* rear = _model->byRole("window.min");
+    const Setting* front = _model->byRole("window.max");
+    if (!_win.dirty || !rear || !front) return;
+    const auto* e = _model->catalog().find(rear->intentCh);
+    const float hz = e && e->maxRateHz > 0.0f ? e->maxRateHz : 10.0f;
+    const uint32_t gapMs = uint32_t(1000.0f / hz + 0.999f);
+    if (!_win.due(_nowMs, gapMs)) return;
+    const window::Win t = _win.target;
+    _win.sent(_nowMs);
+    auto m = live() ? _model->encode(*rear, t.min) : std::nullopt;
+    const auto b = m ? _model->encode(*front, t.max) : std::nullopt;
+    if (!b || m->count + 1 > m->fields.size()) {
+        ESP_LOGW(kTag, "window %.1f..%.1f mm not sent: %s", double(t.min), double(t.max),
+                 live() ? "not encodable" : "no live session");
+        return;
+    }
+    m->fields[m->count++] = b->fields[0];
+    const auto id = _client->sendIntent(rear->intentCh, *m);
+    ESP_LOGI(kTag, "write 0x%04x window %.1f..%.1f mm: %s", unsigned(rear->intentCh), double(t.min), double(t.max),
+             id ? "sent" : "not sent");
+}
+
 bool Session::runAction(std::string_view a, int count) {
     if (a == "halt") {
         halt();
@@ -395,6 +477,16 @@ bool Session::runAction(std::string_view a, int count) {
         pauseToggle();
         return true;
     }
+    if (a == "winmode") {
+        toggleWindowMode();
+        return true;
+    }
+    // wmin and wmax ride the window editor too: one paced, legal frame each.
+    const int dir = !a.empty() && a.back() == '-' ? -count : count;
+    if (a == "win.a+" || a == "win.a-") return windowNudge(_winMode, dir, 0);
+    if (a == "win.b+" || a == "win.b-") return windowNudge(_winMode, 0, dir);
+    if (a == "wmin+" || a == "wmin-") return windowNudge(window::Mode::RearFront, dir, 0);
+    if (a == "wmax+" || a == "wmax-") return windowNudge(window::Mode::RearFront, 0, dir);
     if (a == "run") {
         const Setting* s = _model->byRole("pattern.running");
         if (!s) ESP_LOGW(kTag, "run: this catalog has no setting with role pattern.running");
@@ -410,9 +502,7 @@ bool Session::runAction(std::string_view a, int count) {
                                {"stroke+", "stroke-", "pattern.stroke", false},
                                {"depth+", "depth-", "pattern.depth", false},
                                {"sens+", "sens-", "pattern.sensation", false},
-                               {"pattern+", "pattern-", "pattern.select", true},
-                               {"wmin+", "wmin-", "window.min", false},
-                               {"wmax+", "wmax-", "window.max", false}};
+                               {"pattern+", "pattern-", "pattern.select", true}};
     for (const auto& r : kRoles) {
         if (a == r.up || a == r.down) {
             const Setting* s = _model->byRole(r.role);

@@ -123,8 +123,11 @@ function fails at link time on the build machine.
 A board whose silicon matches another's reuses that board's file: the env
 sets `GARNET_BSP` (the OSSM M5 Remote builds `bsp/m5_cores3se.cpp` with
 `GARNET_BOARD_m5_remote`, which adds the remote PCB's knobs and keys). The
-debounce, detent and knob-acceleration logic is board-independent
-(`app/input_logic.h`) and has host tests (`pio test -e native`).
+debounce, detent, knob-acceleration, halt-hold and power-key edge logic
+(`app/input_logic.h`) and the window math (`app/window_logic.h`) are
+board-independent and have host tests (`pio test -e native`). The CoreS3
+power key reaches only the AXP2101, which reports press and release as
+latched edges; the BSP turns them into a level (`docs/m5-remote.md` 3.1).
 
 ## 4. Input manifest and mapping
 
@@ -178,7 +181,9 @@ exported file readable and stable across firmware updates.
 | `sens+` `sens-` | role `pattern.sensation` |
 | `pattern+` `pattern-` | role `pattern.select`, wrapping at the ends |
 | `run` | toggle role `pattern.running` (start and stop the pattern), from the hub's value |
-| `wmin+` `wmin-` `wmax+` `wmax-` | roles `window.min` and `window.max` |
+| `wmin+` `wmin-` `wmax+` `wmax-` | roles `window.min` and `window.max`, through the window editor below |
+| `win.a+` `win.a-` `win.b+` `win.b-` | the stroke window by the window mode: rear and front limit, or size and position |
+| `winmode` | toggle the window mode (Rear / Front, Size / Position) |
 | `menu+` `menu-` | next or previous screen |
 | `inc:<ch>.<key>` `dec:<ch>.<key>` | nudge any writable catalog setting; `<ch>` is the INTENT channel in hex, `<key>` its schema key |
 | `toggle:<ch>.<key>` | flip a boolean catalog setting |
@@ -191,6 +196,27 @@ counterclockwise runs its mirror (`speed+` and `speed-`, `inc:` and `dec:`),
 so the picker offers an encoder only those. Detents closer than 75 ms ramp
 the step up to 8 per detent, and a knob writes at most every 50 ms with the
 steps summed into one absolute write.
+
+The window actions (`win.*`, `wmin*`, `wmax*`) edit one target window
+(`app/window_logic.h`) and never write a single limit on its own:
+
+- Rear / Front: `win.a` moves the rear limit, `win.b` the front. A limit
+  stops one step from the other and never pushes it.
+- Size / Position: `win.a` grows or shrinks the window around its center,
+  one step at each end per detent; pinned at a rail end it keeps growing to
+  the free side. `win.b` moves both limits by the same amount and stops at a
+  rail end with the size kept.
+- The window stays inside [the rear limit's minimum, the rail length]. The
+  rail length is the value of role `geometry.max_travel` when the hub
+  reports one, else the front limit's maximum. The narrowest window is one
+  step: the hub refuses `min >= max` and a window past `max_rail`
+  (Nucleus `applyConfig`), so Garnet never asks for either.
+- Both limits go out in ONE write on their shared INTENT channel. Two
+  writes would pass through a wrong size or an inverted window between
+  them. Detents land on the target as they arrive; the writes are paced to
+  the channel's `maxRateHz` (10 Hz on Nucleus `config-set`), each carrying
+  the latest target.
+- The mode is not stored: Garnet boots in Rear / Front.
 
 ### 4.3 The mapping flow (Map screen)
 
@@ -219,17 +245,21 @@ mapped action is suspended while the flow runs.
 - The on-screen Halt is not part of the table and cannot be. A mapping can
   add Halt inputs. It can never remove the screen one.
 - An input is unbound unless its board manifest declares a
-  `default_mapping` (operator 2026-10-31, the OSSM M5 Remote: "keep it
-  familiar"). On the Waveshare board, BOOT is mappable and starts unbound.
+  `default_mapping` (operator 2026-10-31, the OSSM M5 Remote: "a default
+  setup is fine"). On the Waveshare board, BOOT is mappable and starts
+  unbound.
 - A physical input mapped to `halt` latches on its press. A new press of it
-  held 3 s after the latch releases, the same rule as the on-screen Halt.
+  held 3 s after the latch releases, the same rule as the on-screen Halt
+  (`input::HaltHold`). The press that latched never counts toward the
+  release: a key held on past the latch (the CoreS3 power key held until
+  the PMIC powers the remote off) leaves the hub halted.
 
 ## 5. Screens
 
 | Area | Content |
 |---|---|
 | Safety strip (top 64 px, `lv_layer_top`) | link state and hub name; Pause/Resume; Halt. Nothing else is created on that layer, so no screen, list or dropdown covers it. |
-| Home | the pattern knobs by role (`pattern.speed`, `.depth`, `.stroke`, `.sensation`) as a bar and a number with unit, the pattern name, the run state, why a write did not go out, and what each physical key does. The row a knob turned last is highlighted. |
+| Home | four rows, each a bar and a number with unit: `pattern.speed`, the window as the mode shows it (Rear and Front, or Size and Position, the names swapping in place), `pattern.sensation`; then the pattern name, the run state, why a write did not go out, and what each physical key does on a fixed two-line legend (the window-mode key names the current mode). The row a knob turned last is highlighted. |
 | Status | position (the field with role `telemetry.position`) as a number and a bar; the safety state in words; the access tier |
 | Controls | one row per writable setting: a switch for booleans, a dropdown for options, a slider otherwise. A slider writes on release with an absolute value. A row shows the hub's applied value and is disabled, never hidden, without the access or when its `meta.enabled_mask` bit is clear (§8.9). |
 | Map | the board drawing and the mapping flow (section 4) |
