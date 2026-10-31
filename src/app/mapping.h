@@ -31,6 +31,13 @@ inline constexpr ActionInfo kFixedActions[] = {
     {"speed-", "Speed down"},
     {"stroke+", "Stroke longer"},
     {"stroke-", "Stroke shorter"},
+    {"depth+", "Depth deeper"},
+    {"depth-", "Depth shallower"},
+    {"sens+", "Sensation +"},
+    {"sens-", "Sensation -"},
+    {"pattern+", "Next pattern"},
+    {"pattern-", "Previous pattern"},
+    {"run", "Start / stop"},
     {"wmin+", "Window start +"},
     {"wmin-", "Window start -"},
     {"wmax+", "Window end +"},
@@ -43,7 +50,7 @@ class Mapping {
 public:
     static constexpr size_t kMaxBindings = 16;
 
-    void load();                                  // from NVS; empty when none
+    bool load();                                  // from NVS; false (and empty) when none is stored
     bool save() const;
     const char* action(std::string_view input) const;  // "none" when unbound
     bool set(std::string_view input, std::string_view action);

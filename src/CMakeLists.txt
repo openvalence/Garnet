@@ -9,9 +9,14 @@ endif()
 if(NOT DEFINED GARNET_BOARD)
     set(GARNET_BOARD waveshare_s3_43)
 endif()
+# A board whose silicon matches another's reuses that BSP file (GARNET_BSP);
+# its manifest and GARNET_BOARD_<board> define stay its own.
+if(NOT DEFINED GARNET_BSP)
+    set(GARNET_BSP ${GARNET_BOARD})
+endif()
 
 idf_component_register(SRCS "main.cpp"
-                            "bsp/${GARNET_BOARD}.cpp"
+                            "bsp/${GARNET_BSP}.cpp"
                             "link/ws_link.cpp" "link/tether_link.cpp" "link/udp.cpp"
                             "app/session.cpp" "app/catalog_model.cpp"
                             "app/mapping.cpp" "app/console.cpp"
@@ -19,7 +24,7 @@ idf_component_register(SRCS "main.cpp"
                             "net/wifi.cpp"
                        INCLUDE_DIRS "." "${VALENCE_ROOT}/lib/valence/include"
                        EMBED_TXTFILES "../boards/${GARNET_BOARD}/manifest.json"
-                       PRIV_REQUIRES esp_driver_gpio esp_driver_i2c esp_driver_usb_serial_jtag
+                       PRIV_REQUIRES esp_driver_gpio esp_driver_i2c esp_driver_pcnt esp_driver_usb_serial_jtag
                                      esp_lcd esp_timer esp_event esp_netif esp_wifi
                                      esp_http_server lwip nvs_flash json mbedtls vfs)
 

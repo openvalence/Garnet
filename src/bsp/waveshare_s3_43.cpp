@@ -214,6 +214,8 @@ uint32_t buttons() {
     return g.bootHeld ? 1u : 0u;
 }
 
+int encoder_delta(int) { return 0; }
+
 std::string_view manifest() {
     return std::string_view(manifest_json_start, strnlen(manifest_json_start, size_t(manifest_json_end - manifest_json_start)));
 }

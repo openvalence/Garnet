@@ -15,12 +15,18 @@
 //   and is never reconfigured here.
 // - No vibration motor on the CoreS3, and the speaker needs the AW88298 amp
 //   over I2S: no click yet.
+// - GARNET_BOARD_m5_remote adds the OSSM M5 Remote PCB (docs/m5-remote.md):
+//   four encoders on the four PCNT units and three active-high keys. Pins and
+//   pulls mirror the remote's own firmware (src/config.h, ESP32Encoder
+//   half-quad with weak pull-downs); never enable them on a bare CoreS3,
+//   where those pins float.
 #include "bsp/bsp.h"
 
 #include <cstring>
 
 #include "driver/gpio.h"
 #include "driver/i2c_master.h"
+#include "driver/pulse_cnt.h"
 #include "driver/spi_master.h"
 #include "esp_heap_caps.h"
 #include "esp_lcd_panel_io.h"
@@ -29,6 +35,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "app/input_logic.h"
 
 extern const char manifest_json_start[] asm("_binary_manifest_json_start");
 extern const char manifest_json_end[] asm("_binary_manifest_json_end");
@@ -45,7 +52,18 @@ constexpr uint8_t kAw = 0x58;
 constexpr uint8_t kTouch = 0x38;
 constexpr uint32_t kPowerPollMs = 50;
 
-const Caps kCaps{kWidth, kHeight, 1};
+#if GARNET_BOARD_m5_remote
+// Manifest order: buttons after the power key, then the encoders.
+constexpr gpio_num_t kKeys[] = {GPIO_NUM_10, GPIO_NUM_8, GPIO_NUM_14};  // MX, left push, right push
+constexpr bool kKeyPullUp[] = {false, false, true};  // as the remote's firmware sets them
+constexpr gpio_num_t kEncA[] = {GPIO_NUM_5, GPIO_NUM_18, GPIO_NUM_1, GPIO_NUM_7};  // CLK
+constexpr gpio_num_t kEncB[] = {GPIO_NUM_9, GPIO_NUM_17, GPIO_NUM_2, GPIO_NUM_6};  // DT
+constexpr int kEncoders = 4;
+constexpr uint32_t kGlitchNs = 3125;  // ESP32Encoder's default filter
+const Caps kCaps{kWidth, kHeight, 4, kEncoders};
+#else
+const Caps kCaps{kWidth, kHeight, 1, 0};
+#endif
 
 struct Board {
     i2c_master_bus_handle_t bus = nullptr;
@@ -57,6 +75,12 @@ struct Board {
     uint16_t* shadow = nullptr;  // PSRAM copy of the screen, for screenshot()
     uint32_t lastPowerPollMs = 0;
     bool powerPulse = false;
+#if GARNET_BOARD_m5_remote
+    input::Debounce keys[3];
+    pcnt_unit_handle_t enc[kEncoders] = {};
+    int encLast[kEncoders] = {};
+    input::Detents detents[kEncoders];
+#endif
 };
 Board g;
 
@@ -199,6 +223,47 @@ void touchCb(lv_indev_t*, lv_indev_data_t* d) {
 
 uint32_t tickMs() { return nowMs(); }
 
+#if GARNET_BOARD_m5_remote
+// Half quadrature on channel A, both edges, level from B: two counts per
+// PEC12R detent, the remote firmware's sign (clockwise counts up).
+void initRemote() {
+    for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); ++i) {
+        gpio_config_t c{};
+        c.pin_bit_mask = 1ULL << kKeys[i];
+        c.mode = GPIO_MODE_INPUT;
+        c.pull_up_en = kKeyPullUp[i] ? GPIO_PULLUP_ENABLE : GPIO_PULLUP_DISABLE;
+        ESP_ERROR_CHECK(gpio_config(&c));
+    }
+    for (int i = 0; i < kEncoders; ++i) {
+        gpio_config_t c{};
+        c.pin_bit_mask = (1ULL << kEncA[i]) | (1ULL << kEncB[i]);
+        c.mode = GPIO_MODE_INPUT;
+        c.pull_down_en = GPIO_PULLDOWN_ENABLE;
+        ESP_ERROR_CHECK(gpio_config(&c));
+        pcnt_unit_config_t uc{};
+        uc.low_limit = -30000;
+        uc.high_limit = 30000;
+        uc.flags.accum_count = 1;
+        ESP_ERROR_CHECK(pcnt_new_unit(&uc, &g.enc[i]));
+        pcnt_glitch_filter_config_t fc{};
+        fc.max_glitch_ns = kGlitchNs;
+        ESP_ERROR_CHECK(pcnt_unit_set_glitch_filter(g.enc[i], &fc));
+        pcnt_chan_config_t cc{};
+        cc.edge_gpio_num = kEncA[i];
+        cc.level_gpio_num = kEncB[i];
+        pcnt_channel_handle_t ch = nullptr;
+        ESP_ERROR_CHECK(pcnt_new_channel(g.enc[i], &cc, &ch));
+        ESP_ERROR_CHECK(pcnt_channel_set_edge_action(ch, PCNT_CHANNEL_EDGE_ACTION_DECREASE, PCNT_CHANNEL_EDGE_ACTION_INCREASE));
+        ESP_ERROR_CHECK(pcnt_channel_set_level_action(ch, PCNT_CHANNEL_LEVEL_ACTION_INVERSE, PCNT_CHANNEL_LEVEL_ACTION_KEEP));
+        ESP_ERROR_CHECK(pcnt_unit_add_watch_point(g.enc[i], uc.high_limit));
+        ESP_ERROR_CHECK(pcnt_unit_add_watch_point(g.enc[i], uc.low_limit));
+        ESP_ERROR_CHECK(pcnt_unit_enable(g.enc[i]));
+        ESP_ERROR_CHECK(pcnt_unit_clear_count(g.enc[i]));
+        ESP_ERROR_CHECK(pcnt_unit_start(g.enc[i]));
+    }
+}
+#endif
+
 }  // namespace
 
 const Caps& caps() { return kCaps; }
@@ -223,9 +288,14 @@ void init() {
     lv_indev_set_type(in, LV_INDEV_TYPE_POINTER);
     lv_indev_set_read_cb(in, touchCb);
     ESP_LOGI(kTag, "M5Stack CoreS3 SE: ILI9342C 320x240 @40 MHz, FT6336, AXP2101, AW9523");
+#if GARNET_BOARD_m5_remote
+    initRemote();
+    ESP_LOGI(kTag, "OSSM M5 Remote PCB: 4 encoders (PCNT), MX key, 2 encoder pushes");
+#endif
 }
 
-uint32_t buttons() {
+namespace {
+uint32_t powerKey() {
     // A power-key short press is an event, not a level: report it held for
     // one scan so the UI sees one edge.
     if (g.powerPulse) {
@@ -239,6 +309,31 @@ uint32_t buttons() {
     regWrite(g.axp, 0x49, uint8_t(irq & 0x0C));
     g.powerPulse = true;
     return 1;
+}
+}  // namespace
+
+uint32_t buttons() {
+    uint32_t m = powerKey();
+#if GARNET_BOARD_m5_remote
+    for (size_t i = 0; i < sizeof(kKeys) / sizeof(kKeys[0]); ++i) {
+        if (g.keys[i].update(gpio_get_level(kKeys[i]) == 1)) m |= 1u << (i + 1);
+    }
+#endif
+    return m;
+}
+
+int encoder_delta(int i) {
+#if GARNET_BOARD_m5_remote
+    if (i < 0 || i >= kEncoders) return 0;
+    int c = 0;
+    if (pcnt_unit_get_count(g.enc[i], &c) != ESP_OK) return 0;
+    const int d = c - g.encLast[i];
+    g.encLast[i] = c;
+    return g.detents[i].take(d);
+#else
+    (void)i;
+    return 0;
+#endif
 }
 
 std::string_view manifest() {

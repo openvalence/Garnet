@@ -10,7 +10,8 @@ Embedded Valence client firmware for handheld remotes.
 
 - Waveshare ESP32-S3-Touch-LCD-4.3 (first)
 - R+D RADR v0.4 (next)
-- M5Stack Core2 / CoreS3 OSSM M5 remote (next)
+- M5Stack CoreS3 SE (env `m5_cores3se`)
+- OSSM M5 Remote on a CoreS3 / CoreS3 SE (env `m5_remote`, `docs/m5-remote.md`)
 
 ## Toolchain
 

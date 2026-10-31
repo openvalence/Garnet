@@ -103,10 +103,11 @@ the wire.
 
 ```cpp
 namespace garnet::bsp {
-struct Caps { uint16_t width, height; uint8_t buttons; };
+struct Caps { uint16_t width, height; uint8_t buttons, encoders; };
 const Caps& caps();
 void init();                  // panel, touch, IO expander, LVGL display + pointer
 uint32_t buttons();           // bit i = physical button i (manifest order), debounced
+int encoder_delta(int i);     // detents on encoder i since the last call, clockwise positive
 std::string_view manifest();  // boards/<board>/manifest.json, embedded
 void screenshot(void (*row)(void*, int y, const uint16_t* px, int w), void*);
 }
@@ -119,9 +120,11 @@ to the one definition it finds. There is no virtual table and no function
 pointer, so there is no runtime dispatch. A board file that is missing a
 function fails at link time on the build machine.
 
-Encoders get one more function when the first board with encoders lands
-(`int8_t encoder_delta(int i)`, detents since the last call). It is not
-declared yet.
+A board whose silicon matches another's reuses that board's file: the env
+sets `GARNET_BSP` (the OSSM M5 Remote builds `bsp/m5_cores3se.cpp` with
+`GARNET_BOARD_m5_remote`, which adds the remote PCB's knobs and keys). The
+debounce, detent and knob-acceleration logic is board-independent
+(`app/input_logic.h`) and has host tests (`pio test -e native`).
 
 ## 4. Input manifest and mapping
 
@@ -152,8 +155,12 @@ contains only shapes and labels: no vendor photo, ever.
 - Coordinates are image pixels at `px_per_mm`.
 - `features` are drawn for orientation only and cannot be mapped (RESET is
   wired to EN and cannot be read).
-- Bit `i` of `bsp::buttons()` is the i-th entry in `inputs` that is not a
-  `touch_zone`.
+- Bit `i` of `bsp::buttons()` is the i-th entry in `inputs` that is neither
+  a `touch_zone` nor an `encoder`. Index `i` of `bsp::encoder_delta()` is the
+  i-th `encoder` entry. An `encoder_push` is a button.
+- `default_mapping` (optional) is a mapping in the export format (4.4). It
+  applies while no mapping is stored in NVS, and it is not saved until the
+  user saves one.
 
 ### 4.2 Actions
 
@@ -167,6 +174,10 @@ exported file readable and stable across firmware updates.
 | `pause` | pause, or resume when paused (resume needs `control`) |
 | `speed+` `speed-` | nudge the setting with role `pattern.speed` by its step |
 | `stroke+` `stroke-` | role `pattern.stroke` |
+| `depth+` `depth-` | role `pattern.depth` |
+| `sens+` `sens-` | role `pattern.sensation` |
+| `pattern+` `pattern-` | role `pattern.select`, wrapping at the ends |
+| `run` | toggle role `pattern.running` (start and stop the pattern), from the hub's value |
 | `wmin+` `wmin-` `wmax+` `wmax-` | roles `window.min` and `window.max` |
 | `menu+` `menu-` | next or previous screen |
 | `inc:<ch>.<key>` `dec:<ch>.<key>` | nudge any writable catalog setting; `<ch>` is the INTENT channel in hex, `<key>` its schema key |
@@ -174,6 +185,12 @@ exported file readable and stable across firmware updates.
 
 The picker lists the fixed actions first, then one entry per writable
 setting in the catalog the remote holds now.
+
+An encoder binds to an action with a direction. Clockwise runs it,
+counterclockwise runs its mirror (`speed+` and `speed-`, `inc:` and `dec:`),
+so the picker offers an encoder only those. Detents closer than 75 ms ramp
+the step up to 8 per detent, and a knob writes at most every 50 ms with the
+steps summed into one absolute write.
 
 ### 4.3 The mapping flow (Map screen)
 
@@ -201,14 +218,18 @@ mapped action is suspended while the flow runs.
 
 - The on-screen Halt is not part of the table and cannot be. A mapping can
   add Halt inputs. It can never remove the screen one.
-- No input is mapped by default. On the Waveshare board, BOOT is mappable
-  and starts unbound.
+- An input is unbound unless its board manifest declares a
+  `default_mapping` (operator 2026-10-31, the OSSM M5 Remote: "keep it
+  familiar"). On the Waveshare board, BOOT is mappable and starts unbound.
+- A physical input mapped to `halt` latches on its press. A new press of it
+  held 3 s after the latch releases, the same rule as the on-screen Halt.
 
 ## 5. Screens
 
 | Area | Content |
 |---|---|
 | Safety strip (top 64 px, `lv_layer_top`) | link state and hub name; Pause/Resume; Halt. Nothing else is created on that layer, so no screen, list or dropdown covers it. |
+| Home | the pattern knobs by role (`pattern.speed`, `.depth`, `.stroke`, `.sensation`) as a bar and a number with unit, the pattern name, the run state, why a write did not go out, and what each physical key does. The row a knob turned last is highlighted. |
 | Status | position (the field with role `telemetry.position`) as a number and a bar; the safety state in words; the access tier |
 | Controls | one row per writable setting: a switch for booleans, a dropdown for options, a slider otherwise. A slider writes on release with an absolute value. A row shows the hub's applied value and is disabled, never hidden, without the access or when its `meta.enabled_mask` bit is clear (§8.9). |
 | Map | the board drawing and the mapping flow (section 4) |
@@ -306,7 +327,7 @@ Garnet reconnects with it at `control`.
 | Physical inputs | BOOT (GPIO0, shared with panel data line 6) | 5 buttons, 2 encoders (A/B) | MX key, 4 encoders (2 with push) | MX key, 4 encoders (2 with push) |
 | Haptics, LEDs, sound | none | coin motor, 3 x WS2812B, buzzer | motor on the PMU | none |
 | Battery | connector and charger, no gauge | 800 mAh, MAX17048 | 2000 mAh via the PMU | via the PMU |
-| BSP state | built (`bsp/waveshare_s3_43.cpp`) | `gar-cs8` | `gar-e2w` | `gar-e2w` |
+| BSP state | built (`bsp/waveshare_s3_43.cpp`) | `gar-cs8` | not targeted (classic ESP32) | env `m5_remote` (`docs/m5-remote.md`) |
 
 ### 9.1 Waveshare 4.3 specifics
 

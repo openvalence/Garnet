@@ -15,7 +15,8 @@ namespace garnet::bsp {
 struct Caps {
     uint16_t width;    // landscape pixels
     uint16_t height;
-    uint8_t buttons;   // physical buttons, manifest order (touch zones excluded)
+    uint8_t buttons;   // physical buttons, manifest order (touch zones and encoders excluded)
+    uint8_t encoders;  // rotary encoders: manifest entries of kind "encoder", in order
 };
 
 const Caps& caps();
@@ -27,6 +28,10 @@ void init();
 // Bit i set = physical button i (manifest order) is held now, debounced.
 // Call every 10 ms.
 uint32_t buttons();
+
+// Detents turned on encoder i since the last call, clockwise positive.
+// Call every 10 ms; 0 for an index the board does not have.
+int encoder_delta(int i);
 
 // The board manifest (boards/<board>/manifest.json), embedded at build time.
 std::string_view manifest();

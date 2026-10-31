@@ -365,16 +365,28 @@ float Session::current(const Setting& s) {
     return _model->value(s).value_or(s.min());
 }
 
-bool Session::nudge(const Setting& s, int dir) {
-    float v = current(s) + float(dir) * s.step();
+bool Session::nudge(const Setting& s, int steps, bool wrap) {
+    float v = current(s) + float(steps) * s.step();
+    if (wrap && v > s.max()) v = s.min();
+    if (wrap && v < s.min()) v = s.max();
     if (v < s.min()) v = s.min();
     if (v > s.max()) v = s.max();
     return write(s, v);
 }
 
+const char* Session::readOnlyReason(const Setting& s) const {
+    if (!live()) return "no session";
+    if (uint8_t(roles()) < uint8_t(s.access)) {
+        return s.access == valence::AccessLevel::configure ? "needs configure (Setup: Ask configure)"
+                                                           : "needs control (Setup: Request control)";
+    }
+    if (!_model->enabled(s, roles())) return "disabled by the hub";
+    return nullptr;
+}
+
 bool Session::toggle(const Setting& s) { return write(s, current(s) >= 0.5f ? 0.0f : 1.0f); }
 
-bool Session::runAction(std::string_view a) {
+bool Session::runAction(std::string_view a, int count) {
     if (a == "halt") {
         halt();
         return true;
@@ -383,20 +395,29 @@ bool Session::runAction(std::string_view a) {
         pauseToggle();
         return true;
     }
+    if (a == "run") {
+        const Setting* s = _model->byRole("pattern.running");
+        if (!s) ESP_LOGW(kTag, "run: this catalog has no setting with role pattern.running");
+        return s && toggle(*s);
+    }
     struct Role {
         const char* up;
         const char* down;
         const char* role;
+        bool wrap;
     };
-    constexpr Role kRoles[] = {{"speed+", "speed-", "pattern.speed"},
-                               {"stroke+", "stroke-", "pattern.stroke"},
-                               {"wmin+", "wmin-", "window.min"},
-                               {"wmax+", "wmax-", "window.max"}};
+    constexpr Role kRoles[] = {{"speed+", "speed-", "pattern.speed", false},
+                               {"stroke+", "stroke-", "pattern.stroke", false},
+                               {"depth+", "depth-", "pattern.depth", false},
+                               {"sens+", "sens-", "pattern.sensation", false},
+                               {"pattern+", "pattern-", "pattern.select", true},
+                               {"wmin+", "wmin-", "window.min", false},
+                               {"wmax+", "wmax-", "window.max", false}};
     for (const auto& r : kRoles) {
         if (a == r.up || a == r.down) {
             const Setting* s = _model->byRole(r.role);
             if (!s) ESP_LOGW(kTag, "%.*s: this catalog has no setting with role %s", int(a.size()), a.data(), r.role);
-            return s && nudge(*s, a == r.up ? 1 : -1);
+            return s && nudge(*s, a == r.up ? count : -count, r.wrap);
         }
     }
     // "<op>:<channel hex>.<key>"
@@ -415,8 +436,8 @@ bool Session::runAction(std::string_view a) {
     const Setting* s = _model->byWrite(ch, key);
     if (!s) return false;
     const std::string_view op = a.substr(0, colon);
-    if (op == "inc") return nudge(*s, 1);
-    if (op == "dec") return nudge(*s, -1);
+    if (op == "inc") return nudge(*s, count);
+    if (op == "dec") return nudge(*s, -count);
     if (op == "toggle") return toggle(*s);
     return false;
 }

@@ -10,6 +10,7 @@
 #include "app/mapping.h"
 #include "app/session.h"
 #include "bsp/bsp.h"
+#include "cJSON.h"
 #include "esp_event.h"
 #include "esp_heap_caps.h"
 #include "esp_log.h"
@@ -165,7 +166,16 @@ void uiTask(void*) {
     lv_init();
     garnet::bsp::init();
     app.mapping = new garnet::Mapping();
-    app.mapping->load();
+    if (!app.mapping->load()) {
+        // Nothing stored yet: the board's declared defaults, unsaved, so a
+        // firmware update can still change them until the user saves a map.
+        cJSON* m = cJSON_ParseWithLength(garnet::bsp::manifest().data(), garnet::bsp::manifest().size());
+        if (char* d = cJSON_PrintUnformatted(cJSON_GetObjectItem(m, "default_mapping"))) {
+            app.mapping->fromJson(d);
+            cJSON_free(d);
+        }
+        cJSON_Delete(m);
+    }
     app.session = new garnet::Session();
     app.session->begin();
     garnet::ui::build(*app.session, *app.mapping);

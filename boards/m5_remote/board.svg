@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1060 640" width="1060" height="640">
+<title>OSSM M5 Remote (CoreS3 SE) (front, screen up, knob row below; geometry from the remote PCB V2.3 placement file, approximate)</title>
+<rect x="0" y="0" width="1060" height="640" rx="120" fill="#1d2a22" stroke="#6a7a70" stroke-width="3" />
+<rect x="330" y="40" width="400" height="300" rx="4" fill="#05070a" stroke="#3a4450" stroke-width="3" />
+<rect x="490" y="0" width="80" height="20" rx="4" fill="#2c3530" stroke="#6a7a70" stroke-width="3" />
+<text x="530.0" y="17.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#9aa8a0">USB-C</text>
+<rect x="250" y="60" width="20" height="60" rx="4" fill="#e0a030" stroke="#e0a030" stroke-width="3" />
+<text x="260.0" y="97.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">PWR [power]</text>
+<rect x="440" y="450" width="180" height="180" rx="4" fill="#e0a030" stroke="#e0a030" stroke-width="3" />
+<text x="530.0" y="547.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">MX [mx]</text>
+<rect x="50" y="320" width="60" height="60" rx="4" fill="#30a0e0" stroke="#30a0e0" stroke-width="3" />
+<text x="80.0" y="357.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">Push L [push_l]</text>
+<rect x="950" y="320" width="60" height="60" rx="4" fill="#30a0e0" stroke="#30a0e0" stroke-width="3" />
+<text x="980.0" y="357.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">Push R [push_r]</text>
+<rect x="10" y="280" width="140" height="140" rx="4" fill="#30a0e0" stroke="#30a0e0" stroke-width="3" />
+<text x="80.0" y="357.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">Knob L [knob_l]</text>
+<rect x="210" y="478" width="140" height="140" rx="4" fill="#30a0e0" stroke="#30a0e0" stroke-width="3" />
+<text x="280.0" y="555.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">Knob CL [knob_cl]</text>
+<rect x="710" y="478" width="140" height="140" rx="4" fill="#30a0e0" stroke="#30a0e0" stroke-width="3" />
+<text x="780.0" y="555.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">Knob CR [knob_cr]</text>
+<rect x="910" y="280" width="140" height="140" rx="4" fill="#30a0e0" stroke="#30a0e0" stroke-width="3" />
+<text x="980.0" y="357.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#101010">Knob R [knob_r]</text>
+<rect x="330" y="40" width="400" height="300" rx="4" fill="none" stroke="#40b070" stroke-width="3" stroke-dasharray="12 8"/>
+<text x="530.0" y="197.0" font-family="sans-serif" font-size="20" text-anchor="middle" fill="#40b070">Touchscreen [screen]</text>
+</svg>

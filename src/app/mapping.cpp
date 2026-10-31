@@ -13,17 +13,20 @@ constexpr const char* kNs = "garnet";
 constexpr const char* kKey = "map";
 }  // namespace
 
-void Mapping::load() {
+bool Mapping::load() {
     clear();
     nvs_handle_t h;
-    if (nvs_open(kNs, NVS_READONLY, &h) != ESP_OK) return;
+    if (nvs_open(kNs, NVS_READONLY, &h) != ESP_OK) return false;
     size_t n = 0;
+    bool stored = false;
     if (nvs_get_str(h, kKey, nullptr, &n) == ESP_OK && n > 0) {
         std::string s(n, '\0');
-        if (nvs_get_str(h, kKey, s.data(), &n) == ESP_OK) fromJson(std::string_view(s.c_str()));
+        stored = nvs_get_str(h, kKey, s.data(), &n) == ESP_OK;
+        if (stored) fromJson(std::string_view(s.c_str()));
     }
     nvs_close(h);
     ESP_LOGI(kTag, "%u binding(s) loaded", unsigned(_count));
+    return stored;
 }
 
 bool Mapping::save() const {

@@ -62,10 +62,13 @@ public:
     // hub's Pair button (or a configure session approves it).
     void askConfigure();
     bool write(const Setting& s, float physical);
-    bool nudge(const Setting& s, int dir);
+    bool nudge(const Setting& s, int steps, bool wrap = false);
     bool toggle(const Setting& s);
-    // A mapping action that is not UI navigation; false when unknown.
-    bool runAction(std::string_view action);
+    // A mapping action that is not UI navigation, `count` times for a nudge
+    // (one write); false when unknown or not sent.
+    bool runAction(std::string_view action, int count = 1);
+    // Why `s` cannot be written now, in words for the screen; nullptr if it can.
+    const char* readOnlyReason(const Setting& s) const;
 
     // ClientDelegate
     void onStateChange(valence::ClientSessionState s) override;
