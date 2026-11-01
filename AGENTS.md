@@ -129,3 +129,4 @@ bd prime                # Refresh Beads context
 ## Garnet
 
 Repo rules, the Canon pointer and conventions live in `CLAUDE.md` and `.claude/rules/governance.md`; they bind every agent.
+Screen text and log lines follow the user-visible string standard, `../Nucleus/.claude/rules/strings.md` (its string pass: workspace skill `string-pass`); this repo has no copy.
