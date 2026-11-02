@@ -127,7 +127,7 @@ void Session::buildClient() {
                                                         : static_cast<valence::ITransport&>(_ws);
     _client = new (p) valence::Client(_id, t, _clock, _rng, *this);
     _client->addSubscriptionWish(valence::channels::safety, 0.0f, valence::Priority::critical);
-    _client->setClientVersion("garnet-0.1.0");
+    _client->setClientVersion("garnet-0.1.1");
     if (haveEtag) _client->setCachedEtag(std::span<const std::byte, valence::limits::etag_bytes>(etag));
     _retryAtMs = _nowMs;
 }
