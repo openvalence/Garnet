@@ -203,7 +203,7 @@ void Session::tickWifi(uint32_t nowMs) {
         char name[33];
         while (_udp.pollReply(ip, port, name, sizeof(name), iid)) {
             if (_savedHubId != 0 && iid != _savedHubId) continue;
-            ESP_LOGI(kTag, "hub \"%s\" at %u.%u.%u.%u:%u", name, unsigned(ip & 0xFF), unsigned((ip >> 8) & 0xFF),
+            ESP_LOGI(kTag, "found hub \"%s\" at %u.%u.%u.%u:%u", name, unsigned(ip & 0xFF), unsigned((ip >> 8) & 0xFF),
                      unsigned((ip >> 16) & 0xFF), unsigned(ip >> 24), unsigned(port));
             std::memcpy(_hubName, name, sizeof(_hubName));
             if (_savedHubId == 0 && iid != 0) {
@@ -252,7 +252,7 @@ void Session::tick(uint32_t nowUs) {
         scheduleRetry(_busyRetryMs, "hub busy");
     }
     if (_stallOnSyncMs != 0 && _client->state() == valence::ClientSessionState::SYNCING) {
-        ESP_LOGW(kTag, "bench: UI task stalls %u ms inside the catalog transfer", unsigned(_stallOnSyncMs));
+        ESP_LOGW(kTag, "stalling the UI task %u ms inside the catalog transfer (bench test)", unsigned(_stallOnSyncMs));
         vTaskDelay(pdMS_TO_TICKS(_stallOnSyncMs));
         _stallOnSyncMs = 0;
     }
@@ -289,7 +289,7 @@ void Session::tick(uint32_t nowUs) {
 }
 
 void Session::printLinkStats() const {
-    std::printf("link: ws %s, unsent %u, rx dropped %u, writes lost %u, catalog requests %u, rx age %u ms\n",
+    std::printf("link: websocket %s, unsent %u, received frames dropped %u, writes lost %u, catalog requests %u, last frame %u ms ago\n",
                 _ws.connected() ? "up" : "down", unsigned(_ws.unsent()), unsigned(_ws.rxDropped()),
                 unsigned(_writesLost), unsigned(_client->catalogReqCount()), unsigned(_client->rxAgeMs()));
 }
@@ -334,13 +334,13 @@ void Session::releaseHalt() {
 
 void Session::knock() {
     if (live() && _client->sendPairKnock()) {
-        ESP_LOGI(kTag, "knock sent: approve it in a configure client (Phosphor: Pairing, Pending knocks)");
+        ESP_LOGI(kTag, "pairing request sent: approve it in a configure client (Phosphor: Pairing, Pending knocks)");
     }
 }
 
 void Session::askConfigure() {
     if (live() && _client->sendPairKnock(valence::AccessLevel::configure)) {
-        ESP_LOGI(kTag, "configure ask sent: double-press the hub's Pair button");
+        ESP_LOGI(kTag, "configure access request sent: double-press the hub's Pair button");
     }
 }
 
@@ -397,11 +397,11 @@ bool Session::windowSettings(const Setting*& rear, const Setting*& front, window
     rear = _model->byRole("window.min");
     front = _model->byRole("window.max");
     if (!rear || !front) {
-        ESP_LOGW(kTag, "window: this catalog has no settings with roles window.min and window.max");
+        ESP_LOGW(kTag, "window: the hub's settings lack the window.min and window.max roles");
         return false;
     }
     if (rear->intentCh != front->intentCh) {
-        ESP_LOGW(kTag, "window: the limits are written on two channels, so no single frame moves both");
+        ESP_LOGW(kTag, "window: the two limits are written on different channels, so one write cannot set both");
         return false;
     }
     l.lo = rear->min();
@@ -489,7 +489,7 @@ bool Session::runAction(std::string_view a, int count) {
     if (a == "wmax+" || a == "wmax-") return windowNudge(window::Mode::RearFront, 0, dir);
     if (a == "run") {
         const Setting* s = _model->byRole("pattern.running");
-        if (!s) ESP_LOGW(kTag, "run: this catalog has no setting with role pattern.running");
+        if (!s) ESP_LOGW(kTag, "run: the hub has no setting with the pattern.running role");
         return s && toggle(*s);
     }
     struct Role {
@@ -506,7 +506,7 @@ bool Session::runAction(std::string_view a, int count) {
     for (const auto& r : kRoles) {
         if (a == r.up || a == r.down) {
             const Setting* s = _model->byRole(r.role);
-            if (!s) ESP_LOGW(kTag, "%.*s: this catalog has no setting with role %s", int(a.size()), a.data(), r.role);
+            if (!s) ESP_LOGW(kTag, "%.*s: the hub has no setting with the %s role", int(a.size()), a.data(), r.role);
             return s && nudge(*s, a == r.up ? count : -count, r.wrap);
         }
     }
@@ -546,7 +546,7 @@ void Session::onStateChange(valence::ClientSessionState s) {
 void Session::onState(uint16_t ch, uint16_t, std::span<const std::byte> payload) { _model->onState(ch, payload); }
 
 void Session::onNack(const valence::NackMsg& n) {
-    ESP_LOGW(kTag, "NACK code 0x%04x on channel 0x%04x, retry_after %u ms", unsigned(n.code), unsigned(n.channel_id),
+    ESP_LOGW(kTag, "hub refused a request: code 0x%04x on channel 0x%04x, retry after %u ms", unsigned(n.code), unsigned(n.channel_id),
              n.has_retry_after_ms ? unsigned(n.retry_after_ms) : 0u);
     // BUSY before LIVE refuses the catalog fetch: leave and come back later,
     // never re-ask at once (acted on in tick(), outside the Client's dispatch).
@@ -571,7 +571,7 @@ void Session::onPairGrant(std::span<const std::byte> token, valence::AccessLevel
     std::copy(token.begin(), token.end(), _id.token.begin());
     _id.hasToken = true;
     nvsPutBlob("token", _id.token.data(), _id.token.size());
-    ESP_LOGI(kTag, "paired, roles %d: reconnecting with the token", int(r));
+    ESP_LOGI(kTag, "paired, access level %d: reconnecting with the token", int(r));
     _rebuild = true;
 }
 

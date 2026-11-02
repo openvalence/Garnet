@@ -298,7 +298,7 @@ void init() {
     ESP_LOGI(kTag, "M5Stack CoreS3 SE: ILI9342C 320x240 @40 MHz, FT6336, AXP2101, AW9523");
 #if GARNET_BOARD_m5_remote
     initRemote();
-    ESP_LOGI(kTag, "OSSM M5 Remote PCB: 4 encoders (PCNT), MX key, 2 encoder pushes");
+    ESP_LOGI(kTag, "OSSM M5 Remote PCB: 4 encoders (pulse counter), MX key, 2 encoder pushes");
 #endif
 }
 

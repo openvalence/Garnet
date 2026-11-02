@@ -221,7 +221,7 @@ void http_start() {
   c.max_uri_handlers = 3;
   c.lru_purge_enable = true;
   c.uri_match_fn = httpd_uri_match_wildcard;
-  if (httpd_start(&httpd_, &c) != ESP_OK) { httpd_ = nullptr; ESP_LOGW(TAG, "httpd start failed"); return; }
+  if (httpd_start(&httpd_, &c) != ESP_OK) { httpd_ = nullptr; ESP_LOGW(TAG, "portal web server failed to start"); return; }
   for (const auto& h : kUris) httpd_register_uri_handler(httpd_, &h);
 }
 
@@ -271,7 +271,7 @@ void load_locked() {
     vn::wipeBytes(s, sizeof s);
     vn::wipeBytes(p, sizeof p);
   } else {
-    ESP_LOGW(TAG, "saved list unreadable (nvs %d), starting empty", int(e));
+    ESP_LOGW(TAG, "saved list unreadable (storage error %d), starting empty", int(e));
   }
   nvs_close(h);
 }
@@ -313,8 +313,8 @@ void try_entry_locked(uint8_t id) {
   cur_id_ = id;
   phase_ = Phase::Trying;
   const int8_t r = order_rssi_[pos_];
-  if (r == vn::kRssiUnseen) ESP_LOGI(TAG, "trying slot %d of %u, not heard", int(*at) + 1, unsigned(list_.count()));
-  else ESP_LOGI(TAG, "trying slot %d of %u, scan %d dBm", int(*at) + 1, unsigned(list_.count()), int(r));
+  if (r == vn::kRssiUnseen) ESP_LOGI(TAG, "trying slot %d of %u, not found in scan", int(*at) + 1, unsigned(list_.count()));
+  else ESP_LOGI(TAG, "trying slot %d of %u, seen in scan at %d dBm", int(*at) + 1, unsigned(list_.count()), int(r));
   if (list_.count() > 1) arm(try_t_, TRY_US);
   if (esp_wifi_connect() != ESP_OK) advance_locked();
 }
@@ -479,7 +479,7 @@ void on_event(void*, esp_event_base_t base, int32_t id, void* data) {
     state_ = State::Connected;
     wifi_ap_record_t ap{};
     if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
-      ESP_LOGI(TAG, "joined slot %d of %u: bssid ..%02x:%02x, channel %u, rssi %d dBm", slot_of(live_id_) + 1,
+      ESP_LOGI(TAG, "joined slot %d of %u: access point MAC ..%02x:%02x, channel %u, signal %d dBm", slot_of(live_id_) + 1,
                unsigned(list_.count()), ap.bssid[4], ap.bssid[5], unsigned(ap.primary), int(ap.rssi));
     }
   }

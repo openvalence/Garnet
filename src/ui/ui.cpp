@@ -395,7 +395,7 @@ void refreshHome() {
     const Setting* run = m.loaded() ? m.byRole("pattern.running") : nullptr;
     const auto rv = run ? m.value(*run) : std::nullopt;
     if (!s.live()) {
-        std::snprintf(buf, sizeof buf, "No session: knobs wait, Halt still goes out.");
+        std::snprintf(buf, sizeof buf, "No link: controls wait, Halt still goes out.");
     } else if (u.refusal[0] && nowMs() - u.refusalMs < 4000) {
         std::snprintf(buf, sizeof buf, "%s", u.refusal);
     } else if (s.estopLatched()) {
@@ -455,10 +455,10 @@ void refreshStatus() {
         lv_bar_set_range(u.posBar, int32_t(lo), int32_t(hi > lo ? hi : lo + 1));
         lv_bar_set_value(u.posBar, int32_t(*v), LV_ANIM_OFF);
     } else {
-        lv_label_set_text(u.posLbl, r ? "--" : "no position in this catalog");
+        lv_label_set_text(u.posLbl, r ? "--" : "no position reported");
     }
     if (!s.live()) {
-        lv_label_set_text(u.safetyLbl, "No session: Halt still goes out as a datagram.");
+        lv_label_set_text(u.safetyLbl, "No link: Halt still goes out, unconfirmed.");
     } else if (s.estopLatched()) {
         lv_label_set_text(u.safetyLbl, "Halt latched. Hold the Halt button 3 s to release.");
     } else if (s.pauseLatched()) {
